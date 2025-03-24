@@ -72,7 +72,7 @@ fn combine_bytes(bytes: (u8, u8)) -> u16 {
     (bytes.0 as u16) << 8 | bytes.1 as u16
 }
 
-fn compare_ins_remainder(ins: String, comp: String) -> bool {
+fn compare_ins_remainder(ins: &str, comp: String) -> bool {
     let length = String::len(&comp);
     // This feels like the wrong way to approach this -- would love a better solution
     if ins[4 - length..4].chars().cmp(comp.chars()) == Ordering::Equal {
@@ -87,8 +87,10 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     // Unwrapping directly because above format string should always have 4 characters
     match instruction.chars().nth(0).unwrap() {
         '0' => {
-            if compare_ins_remainder(instruction, String::from("0e0")) {
+            if compare_ins_remainder(&instruction, String::from("0e0")) {
                 Instruction::ClearScreen
+            } else if compare_ins_remainder(&instruction, String::from("0ee")) {
+                Instruction::ReturnSubroutine
             } else {
                 Instruction::NotImplemented
             }
@@ -107,48 +109,79 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     }
 }
 
-// NOTE: Shifts are ambiguous see https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
-// NOTE: JumpWithOffset,              // BNNN, GOTO NNN + V0 -- Allow program to configure this
-// NOTE: AddToIndex Flag overflow - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#fx1e-add-to-index
 #[allow(dead_code)]
 #[derive(PartialEq, Debug)]
 enum Instruction {
-    ExecuteMachineLangaugeRoutine(u16), // 0NNN, Don't implement unless COSMAC VIP, ETI-660, DREAM 6800
-    ClearScreen,                        // 00E0, clear display
-    Jump(u16),                          // 1NNN, GOTO NNN
-    CallSubroutine(u16),                // 2NNN, Push PC to stack, GOTO NNN
-    ReturnSubroutine,                   // 00EE, PC == stack.pop
-    ValueEqualitySkip(u8, u8),          // 3XNN, VX == NN
-    ValueInequalitySkip(u8, u8),        // 4XNN, VX != NN
-    RegisterEqualitySkip(u8, u8),       // 5XY0, VX == VY
-    RegisterInequalitySkip(u8, u8),     // 9XY0, VX != VY
-    SetRegisterToValue(u8, u8),         // 6XNN, VX = NN
-    AddRegisterNoFlag(u8, u8),          // 7XNN, VX += NN     and do NOT update carry flag
-    SetRegisterToRegister(u8, u8),      // 8XY0, VX = VY
-    OrRegister(u8, u8),                 // 8XY1, VX |= VY
-    AndRegister(u8, u8),                // 8XY2, VX &= VY
-    XorRegister(u8, u8),                // 8XY3, VX ^= VY
-    AddRegisterWithFlag(u8, u8),        // 8XY4, VX += VY     and DO update carry flag
-    SubtractXYRegisterWithFlag(u8, u8), // 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
-    SubtractYXRegisterWithFlag(u8, u8), // 8XY7, VX = VY - VX and VF = if VY>=VX {1} else {0}
-    ShiftRight(u8, u8),                 // 8XY6, see shift note above
-    ShiftLeft(u8, u8),                  // 8XYE, see shift note above
-    SetIndex(u8, u16),                  // ANNN, i = NNN
-    JumpWithRegisterOffset(u8, u8), // BXNN, GOTO NNN + VX and see above comment on JumpWithOffset
-    Random(u8, u8),                 // CXNN, VX = randomInt & NN
-    Draw(u8, u8, u8),               // DXYN, Draw sprite of height N located at i to coords (VX, VY)
-    SkipIfPressed(u8),              // EX8E, Skip if KEY in VX is pressed
-    SkipIfNotPressed(u8),           // EXA1, Skip if KEY in VX is NOT pressed
-    GetDelayTimer(u8),              // FX07, VX = delay_timer
-    SetDelayTimer(u8),              // FX15, delay_timer = VX
-    SetSoundTimer(u8),              // FX18, sound_timer = VX
-    AddToIndex(u8),                 // FX1E, i += VX, read about flag overflowing
-    FontCharacter(u8),              // FX29, i = fontLocation(VX)
-    DecimalConversion(u8),          // FX33, converted = decimalStr(VX);
-    //                                      ram[i..i+len(converted)] = converted[...];
-    StoreMemory(u8), // FX55, V0..VX are stored from i..i+X. i isn't touched except for older games
-    LoadMemory(u8),  // FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
-    NotImplemented,  // Instruction type for not implemented
+    /// (NNN) 0NNN, Don't implement unless COSMAC VIP, ETI-660, DREAM 6800
+    ExecuteMachineLangaugeRoutine(u16),
+    /// 00E0, clear display
+    ClearScreen,
+    /// (NNN) 1NNN, GOTO NNN
+    Jump(u16),
+    /// (NNN) 2NNN, Push PC to stack, GOTO NNN
+    CallSubroutine(u16),
+    /// 00EE, PC == stack.pop
+    ReturnSubroutine,
+    /// (X, NN) 3XNN, VX == NN
+    ValueEqualitySkip(u8, u8),
+    /// (X, NN) 4XNN, VX != NN
+    ValueInequalitySkip(u8, u8),
+    /// (X, Y) 5XY0, VX == VY
+    RegisterEqualitySkip(u8, u8),
+    /// (X, Y) 9XY0, VX != VY
+    RegisterInequalitySkip(u8, u8),
+    /// (X, NN) 6XNN, VX = NN
+    SetRegisterToValue(u8, u8),
+    /// (X, NN) 7XNN, VX += NN     and do NOT update carry flag
+    AddRegisterNoFlag(u8, u8),
+    /// (X, Y) 8XY0, VX = VY
+    SetRegisterToRegister(u8, u8),
+    /// (X, Y) 8XY1, VX |= VY
+    OrRegister(u8, u8),
+    /// (X, Y) 8XY2, VX &= VY
+    AndRegister(u8, u8),
+    /// (X, Y) 8XY3, VX ^= VY
+    XorRegister(u8, u8),
+    /// (X, Y) 8XY4, VX += VY     and DO update carry flag
+    AddRegisterWithFlag(u8, u8),
+    /// (X, Y) 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
+    SubtractXYRegisterWithFlag(u8, u8),
+    /// (X, Y) 8XY7, VX = VY - VX and VF = if VY>=VX {1} else {0}
+    SubtractYXRegisterWithFlag(u8, u8),
+    /// (X, Y) 8XY6, Shifts are ambiguous see https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
+    ShiftRight(u8, u8),
+    /// (X, Y) 8XYE, see shift note above
+    ShiftLeft(u8, u8),
+    /// (NNN) ANNN, i = NNN
+    SetIndex(u16),
+    /// (X, NN) BXNN, GOTO NN + VX AND DIFFERENTLY BNNN, GOTO NNN + V0 -- Allow program to configure this
+    JumpWithRegisterOffset(u8, u8),
+    /// (X, NN) CXNN, VX = randomInt & NN
+    Random(u8, u8),
+    /// (X, Y, N) DXYN, Draw sprite of height N located at i to coords (VX, VY)
+    Draw(u8, u8, u8),
+    /// (X) EX8E, Skip if KEY in VX is pressed
+    SkipIfPressed(u8),
+    /// (X) EXA1, Skip if KEY in VX is NOT pressed
+    SkipIfNotPressed(u8),
+    /// (X) FX07, VX = delay_timer
+    GetDelayTimer(u8),
+    /// (X) FX15, delay_timer = VX
+    SetDelayTimer(u8),
+    /// (X) FX18, sound_timer = VX
+    SetSoundTimer(u8),
+    /// (X) FX1E, i += VX, read about Flag overflow - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#fx1e-add-to-index
+    AddToIndex(u8),
+    /// (X) FX29, i = fontLocation(VX)
+    FontCharacter(u8),
+    /// (X) FX33, converted = decimalStr(VX); ram[i..i+len(converted)] = converted[...];
+    DecimalConversion(u8),
+    /// (X) FX55, V0..VX are stored from i..i+X. i isn't touched except for older games
+    StoreMemory(u8),
+    /// (X) FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
+    LoadMemory(u8),
+    /// Instruction type for not implemented
+    NotImplemented,
 }
 
 #[cfg(test)]
@@ -168,6 +201,11 @@ mod tests {
                 name: String::from("ClearScreen"),
                 bytes: (0, 224),
                 expected: Instruction::ClearScreen,
+            },
+            TestCase {
+                name: String::from("ReturnSubroutine"),
+                bytes: (0, 238),
+                expected: Instruction::ReturnSubroutine,
             },
             TestCase {
                 name: String::from("Jump 2 nibbles"),
