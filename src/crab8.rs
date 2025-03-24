@@ -1,5 +1,8 @@
+use std::cmp::Ordering;
+
 /// Spec of Crab8 largely written as described here
 /// https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
+#[allow(dead_code)]
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
@@ -65,43 +68,144 @@ impl Crab8 {
     }
 }
 
+fn combine_bytes(bytes: (u8, u8)) -> u16 {
+    (bytes.0 as u16) << 8 | bytes.1 as u16
+}
+
+fn compare_ins_remainder(ins: String, comp: String) -> bool {
+    let length = String::len(&comp);
+    // This feels like the wrong way to approach this -- would love a better solution
+    if ins[4 - length..4].chars().cmp(comp.chars()) == Ordering::Equal {
+        return true;
+    }
+    return false;
+}
+
+fn parse_instruction(bytes: (u8, u8)) -> Instruction {
+    let instruction: String = format!("{:04x}", combine_bytes(bytes));
+
+    // Unwrapping directly because above format string should always have 4 characters
+    match instruction.chars().nth(0).unwrap() {
+        '0' => {
+            if compare_ins_remainder(instruction, String::from("0e0")) {
+                Instruction::ClearScreen
+            } else {
+                Instruction::NotImplemented
+            }
+        }
+        '1' => {
+            // TODO: Handle unwrap
+            return Instruction::Jump(u16::from_str_radix(&instruction[1..4], 16).unwrap());
+        }
+        '2' => {
+            // TODO: Handle unwrap
+            return Instruction::CallSubroutine(
+                u16::from_str_radix(&instruction[1..4], 16).unwrap(),
+            );
+        }
+        _ => return Instruction::NotImplemented,
+    }
+}
+
 // NOTE: Shifts are ambiguous see https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
 // NOTE: JumpWithOffset,              // BNNN, GOTO NNN + V0 -- Allow program to configure this
 // NOTE: AddToIndex Flag overflow - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#fx1e-add-to-index
-enum Instructions {
-    ExecuteMachineLangaugeRoutine, // 0NNN, Don't implement unless COSMAC VIP, ETI-660, DREAM 6800
-    ClearScreen,                   // 00E0, clear display
-    Jump,                          // 1NNN, GOTO NNN
-    CallSubroutine,                // 2NNN, Push PC to stack, GOTO NNN
-    ReturnSubroutine,              // 00EE, PC == stack.pop
-    ValueEqualitySkip,             // 3XNN, VX == NN
-    ValueInequalitySkip,           // 4XNN, VX != NN
-    RegisterEqualitySkip,          // 5XY0, VX == VY
-    RegisterInequalitySkip,        // 9XY0, VX != VY
-    SetRegisterToValue,            // 6XNN, VX = NN
-    AddRegisterNoFlag,             // 7XNN, VX += NN     and do NOT update carry flag
-    SetRegisterToRegister,         // 8XY0, VX = VY
-    OrRegister,                    // 8XY1, VX |= VY
-    AndRegister,                   // 8XY2, VX &= VY
-    XorRegister,                   // 8XY3, VX ^= VY
-    AddRegisterWithFlag,           // 8XY4, VX += VY     and DO update carry flag
-    SubtractXYRegisterWithFlag,    // 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
-    SubtractYXRegisterWithFlag,    // 8XY7, VX = VY - VX and VF = if VY>=VX {1} else {0}
-    ShiftRight,                    // 8XY6, see shift note above
-    ShiftLeft,                     // 8XYE, see shift note above
-    SetIndex,                      // ANNN, i = NNN
-    JumpWithRegisterOffset,        // BXNN, GOTO NNN + VX and see above comment on JumpWithOffset
-    Random,                        // CXNN, VX = randomInt & NN
-    Draw,                          // DXYN, Draw sprite of height N located at i to coords (VX, VY)
-    SkipIfPressed,                 // EX8E, Skip if KEY in VX is pressed
-    SkipIfNotPressed,              // EXA1, Skip if KEY in VX is NOT pressed
-    GetDelayTimer,                 // FX07, VX = delay_timer
-    SetDelayTimer,                 // FX15, delay_timer = VX
-    SetSoundTimer,                 // FX18, sound_timer = VX
-    AddToIndex,                    // FX1E, i += VX, read about flag overflowing
-    FontCharacter,                 // FX29, i = fontLocation(VX)
-    DecimalConversion,             // FX33, converted = decimalStr(VX);
+#[allow(dead_code)]
+#[derive(PartialEq, Debug)]
+enum Instruction {
+    ExecuteMachineLangaugeRoutine(u16), // 0NNN, Don't implement unless COSMAC VIP, ETI-660, DREAM 6800
+    ClearScreen,                        // 00E0, clear display
+    Jump(u16),                          // 1NNN, GOTO NNN
+    CallSubroutine(u16),                // 2NNN, Push PC to stack, GOTO NNN
+    ReturnSubroutine,                   // 00EE, PC == stack.pop
+    ValueEqualitySkip(u8, u8),          // 3XNN, VX == NN
+    ValueInequalitySkip(u8, u8),        // 4XNN, VX != NN
+    RegisterEqualitySkip(u8, u8),       // 5XY0, VX == VY
+    RegisterInequalitySkip(u8, u8),     // 9XY0, VX != VY
+    SetRegisterToValue(u8, u8),         // 6XNN, VX = NN
+    AddRegisterNoFlag(u8, u8),          // 7XNN, VX += NN     and do NOT update carry flag
+    SetRegisterToRegister(u8, u8),      // 8XY0, VX = VY
+    OrRegister(u8, u8),                 // 8XY1, VX |= VY
+    AndRegister(u8, u8),                // 8XY2, VX &= VY
+    XorRegister(u8, u8),                // 8XY3, VX ^= VY
+    AddRegisterWithFlag(u8, u8),        // 8XY4, VX += VY     and DO update carry flag
+    SubtractXYRegisterWithFlag(u8, u8), // 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
+    SubtractYXRegisterWithFlag(u8, u8), // 8XY7, VX = VY - VX and VF = if VY>=VX {1} else {0}
+    ShiftRight(u8, u8),                 // 8XY6, see shift note above
+    ShiftLeft(u8, u8),                  // 8XYE, see shift note above
+    SetIndex(u8, u16),                  // ANNN, i = NNN
+    JumpWithRegisterOffset(u8, u8), // BXNN, GOTO NNN + VX and see above comment on JumpWithOffset
+    Random(u8, u8),                 // CXNN, VX = randomInt & NN
+    Draw(u8, u8, u8),               // DXYN, Draw sprite of height N located at i to coords (VX, VY)
+    SkipIfPressed(u8),              // EX8E, Skip if KEY in VX is pressed
+    SkipIfNotPressed(u8),           // EXA1, Skip if KEY in VX is NOT pressed
+    GetDelayTimer(u8),              // FX07, VX = delay_timer
+    SetDelayTimer(u8),              // FX15, delay_timer = VX
+    SetSoundTimer(u8),              // FX18, sound_timer = VX
+    AddToIndex(u8),                 // FX1E, i += VX, read about flag overflowing
+    FontCharacter(u8),              // FX29, i = fontLocation(VX)
+    DecimalConversion(u8),          // FX33, converted = decimalStr(VX);
     //                                      ram[i..i+len(converted)] = converted[...];
-    StoreMemory, // FX55, V0..VX are stored from i..i+X. i isn't touched except for older games
-    LoadMemory,  // FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
+    StoreMemory(u8), // FX55, V0..VX are stored from i..i+X. i isn't touched except for older games
+    LoadMemory(u8),  // FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
+    NotImplemented,  // Instruction type for not implemented
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_instruction() {
+        struct TestCase {
+            name: String,
+            bytes: (u8, u8),
+            expected: Instruction,
+        }
+
+        let test_cases: Vec<TestCase> = vec![
+            TestCase {
+                name: String::from("ClearScreen"),
+                bytes: (0, 224),
+                expected: Instruction::ClearScreen,
+            },
+            TestCase {
+                name: String::from("Jump 2 nibbles"),
+                bytes: (16, 123),
+                expected: Instruction::Jump(123),
+            },
+            TestCase {
+                // Jump takes 3 hex values, so the the leftover 1 from first byte adds to value
+                name: String::from("Jump 3 nibbles"),
+                bytes: (17, 123),
+                expected: Instruction::Jump(379),
+            },
+            TestCase {
+                name: String::from("CallSubroutine 2 nibbles"),
+                bytes: (32, 123),
+                expected: Instruction::CallSubroutine(123),
+            },
+            TestCase {
+                name: String::from("CallSubroutine 3 nibbles"),
+                bytes: (33, 123),
+                expected: Instruction::CallSubroutine(379),
+            },
+            TestCase {
+                name: String::from("NotImplemented"),
+                bytes: (255, 0),
+                expected: Instruction::NotImplemented,
+            },
+        ];
+
+        for tc in test_cases {
+            assert!(
+                tc.expected == parse_instruction(tc.bytes),
+                "Testing {} with {:?} -- expected {:?}, got {:?}",
+                tc.name,
+                tc.bytes,
+                tc.expected,
+                parse_instruction(tc.bytes)
+            );
+        }
+    }
 }
