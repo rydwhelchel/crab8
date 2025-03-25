@@ -1,7 +1,7 @@
+//! Spec of Crab8 largely written as described here
+//! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
 use std::cmp::Ordering;
 
-/// Spec of Crab8 largely written as described here
-/// https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
 #[allow(dead_code)]
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
@@ -130,7 +130,45 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
         ),
-        '8' => Instruction::NotImplemented, // TODO:
+        '8' => match instruction.chars().nth(3).unwrap() {
+            '0' => Instruction::SetRegisterToRegister(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '1' => Instruction::OrRegister(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '2' => Instruction::AndRegister(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '3' => Instruction::XorRegister(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '4' => Instruction::AddRegisterWithFlag(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '5' => Instruction::SubtractXYRegisterWithFlag(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '6' => Instruction::ShiftRight(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            '7' => Instruction::SubtractYXRegisterWithFlag(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            'e' => Instruction::ShiftLeft(
+                u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            ),
+            _ => Instruction::NotImplemented,
+        },
         '9' => {
             if instruction.chars().nth(3) == Some('0') {
                 Instruction::RegisterInequalitySkip(
@@ -155,8 +193,40 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
             u8::from_str_radix(&instruction[2..3], 16).unwrap(),
             u8::from_str_radix(&instruction[3..4], 16).unwrap(),
         ),
-        'e' => Instruction::NotImplemented,
-        'f' => Instruction::NotImplemented,
+        'e' => {
+            if compare_ins_remainder(&instruction, String::from("9e")) {
+                Instruction::SkipIfPressed(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("a1")) {
+                Instruction::SkipIfNotPressed(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else {
+                Instruction::NotImplemented
+            }
+        }
+        'f' => {
+            // TODO: Convert to inner switch
+            if compare_ins_remainder(&instruction, String::from("07")) {
+                Instruction::GetDelayTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("15")) {
+                Instruction::SetDelayTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("18")) {
+                Instruction::SetSoundTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("1E")) {
+                Instruction::AddToIndex(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("0A")) {
+                Instruction::GetKey(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("29")) {
+                Instruction::FontCharacter(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("33")) {
+                Instruction::DecimalConversion(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("55")) {
+                Instruction::StoreMemory(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else if compare_ins_remainder(&instruction, String::from("65")) {
+                Instruction::LoadMemory(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+            } else {
+                Instruction::NotImplemented
+            }
+        }
+
         _ => Instruction::NotImplemented,
     }
 }
@@ -253,6 +323,9 @@ enum Instruction {
 
     /// (X) FX1E, i += VX, read about Flag overflow - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#fx1e-add-to-index
     AddToIndex(u8),
+
+    /// (X) FX0A, VX <- KeyInput - Waits for key input(blocks by decrementing PC until a key is pressed)
+    GetKey(u8),
 
     /// (X) FX29, i = fontLocation(VX)
     FontCharacter(u8),
