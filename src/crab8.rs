@@ -84,6 +84,7 @@ fn compare_ins_remainder(ins: &str, comp: String) -> bool {
 fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     let instruction: String = format!("{:04x}", combine_bytes(bytes));
 
+    println!("{}", instruction);
     // Unwrapping directly because above format string should always have 4 characters
     match instruction.chars().nth(0).unwrap() {
         '0' => {
@@ -97,15 +98,66 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
         }
         '1' => {
             // TODO: Handle unwrap
-            return Instruction::Jump(u16::from_str_radix(&instruction[1..4], 16).unwrap());
+            Instruction::Jump(u16::from_str_radix(&instruction[1..4], 16).unwrap())
         }
         '2' => {
             // TODO: Handle unwrap
-            return Instruction::CallSubroutine(
-                u16::from_str_radix(&instruction[1..4], 16).unwrap(),
-            );
+            Instruction::CallSubroutine(u16::from_str_radix(&instruction[1..4], 16).unwrap())
         }
-        _ => return Instruction::NotImplemented,
+        '3' => Instruction::ValueEqualitySkip(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        '4' => Instruction::ValueInequalitySkip(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        '5' => {
+            if instruction.chars().nth(3) == Some('0') {
+                Instruction::RegisterEqualitySkip(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                    u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+                )
+            } else {
+                Instruction::NotImplemented
+            }
+        }
+        '6' => Instruction::SetRegisterToValue(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        '7' => Instruction::AddRegisterNoFlag(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        '8' => Instruction::NotImplemented, // TODO:
+        '9' => {
+            if instruction.chars().nth(3) == Some('0') {
+                Instruction::RegisterInequalitySkip(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                    u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+                )
+            } else {
+                Instruction::NotImplemented
+            }
+        }
+        'a' => Instruction::SetIndex(u16::from_str_radix(&instruction[1..4], 16).unwrap()),
+        'b' => Instruction::JumpWithRegisterOffset(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        'c' => Instruction::Random(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+        ),
+        'd' => Instruction::Draw(
+            u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+            u8::from_str_radix(&instruction[2..3], 16).unwrap(),
+            u8::from_str_radix(&instruction[3..4], 16).unwrap(),
+        ),
+        'e' => Instruction::NotImplemented,
+        'f' => Instruction::NotImplemented,
+        _ => Instruction::NotImplemented,
     }
 }
 
@@ -114,72 +166,106 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
 enum Instruction {
     /// (NNN) 0NNN, Don't implement unless COSMAC VIP, ETI-660, DREAM 6800
     ExecuteMachineLangaugeRoutine(u16),
+
     /// 00E0, clear display
     ClearScreen,
+
     /// (NNN) 1NNN, GOTO NNN
     Jump(u16),
+
     /// (NNN) 2NNN, Push PC to stack, GOTO NNN
     CallSubroutine(u16),
+
     /// 00EE, PC == stack.pop
     ReturnSubroutine,
+
     /// (X, NN) 3XNN, VX == NN
     ValueEqualitySkip(u8, u8),
+
     /// (X, NN) 4XNN, VX != NN
     ValueInequalitySkip(u8, u8),
+
     /// (X, Y) 5XY0, VX == VY
     RegisterEqualitySkip(u8, u8),
+
     /// (X, Y) 9XY0, VX != VY
     RegisterInequalitySkip(u8, u8),
+
     /// (X, NN) 6XNN, VX = NN
     SetRegisterToValue(u8, u8),
+
     /// (X, NN) 7XNN, VX += NN     and do NOT update carry flag
     AddRegisterNoFlag(u8, u8),
+
     /// (X, Y) 8XY0, VX = VY
     SetRegisterToRegister(u8, u8),
+
     /// (X, Y) 8XY1, VX |= VY
     OrRegister(u8, u8),
+
     /// (X, Y) 8XY2, VX &= VY
     AndRegister(u8, u8),
+
     /// (X, Y) 8XY3, VX ^= VY
     XorRegister(u8, u8),
+
     /// (X, Y) 8XY4, VX += VY     and DO update carry flag
     AddRegisterWithFlag(u8, u8),
+
     /// (X, Y) 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
     SubtractXYRegisterWithFlag(u8, u8),
+
     /// (X, Y) 8XY7, VX = VY - VX and VF = if VY>=VX {1} else {0}
     SubtractYXRegisterWithFlag(u8, u8),
+
     /// (X, Y) 8XY6, Shifts are ambiguous see https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
     ShiftRight(u8, u8),
+
     /// (X, Y) 8XYE, see shift note above
     ShiftLeft(u8, u8),
+
     /// (NNN) ANNN, i = NNN
     SetIndex(u16),
+
     /// (X, NN) BXNN, GOTO NN + VX AND DIFFERENTLY BNNN, GOTO NNN + V0 -- Allow program to configure this
     JumpWithRegisterOffset(u8, u8),
+
     /// (X, NN) CXNN, VX = randomInt & NN
     Random(u8, u8),
+
     /// (X, Y, N) DXYN, Draw sprite of height N located at i to coords (VX, VY)
     Draw(u8, u8, u8),
+
     /// (X) EX8E, Skip if KEY in VX is pressed
     SkipIfPressed(u8),
+
     /// (X) EXA1, Skip if KEY in VX is NOT pressed
     SkipIfNotPressed(u8),
+
     /// (X) FX07, VX = delay_timer
     GetDelayTimer(u8),
+
     /// (X) FX15, delay_timer = VX
     SetDelayTimer(u8),
+
     /// (X) FX18, sound_timer = VX
     SetSoundTimer(u8),
+
     /// (X) FX1E, i += VX, read about Flag overflow - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#fx1e-add-to-index
     AddToIndex(u8),
+
     /// (X) FX29, i = fontLocation(VX)
     FontCharacter(u8),
+
     /// (X) FX33, converted = decimalStr(VX); ram[i..i+len(converted)] = converted[...];
     DecimalConversion(u8),
+
     /// (X) FX55, V0..VX are stored from i..i+X. i isn't touched except for older games
     StoreMemory(u8),
+
     /// (X) FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
     LoadMemory(u8),
+
     /// Instruction type for not implemented
     NotImplemented,
 }
@@ -198,39 +284,129 @@ mod tests {
 
         let test_cases: Vec<TestCase> = vec![
             TestCase {
-                name: String::from("ClearScreen"),
-                bytes: (0, 224),
+                name: String::from("00E0 - ClearScreen"),
+                bytes: (0x00, 0xE0),
                 expected: Instruction::ClearScreen,
             },
             TestCase {
-                name: String::from("ReturnSubroutine"),
-                bytes: (0, 238),
+                name: String::from("00EE - ReturnSubroutine"),
+                bytes: (0x00, 0xEE),
                 expected: Instruction::ReturnSubroutine,
             },
             TestCase {
-                name: String::from("Jump 2 nibbles"),
-                bytes: (16, 123),
+                name: String::from("1--- - Jump 2 nibbles"),
+                bytes: (0x10, 123),
                 expected: Instruction::Jump(123),
             },
             TestCase {
                 // Jump takes 3 hex values, so the the leftover 1 from first byte adds to value
-                name: String::from("Jump 3 nibbles"),
-                bytes: (17, 123),
+                name: String::from("1--- - Jump 3 nibbles"),
+                bytes: (0x11, 123),
                 expected: Instruction::Jump(379),
             },
             TestCase {
-                name: String::from("CallSubroutine 2 nibbles"),
-                bytes: (32, 123),
+                name: String::from("2--- - CallSubroutine 2 nibbles"),
+                bytes: (0x20, 123),
                 expected: Instruction::CallSubroutine(123),
             },
             TestCase {
-                name: String::from("CallSubroutine 3 nibbles"),
-                bytes: (33, 123),
+                name: String::from("2--- - CallSubroutine 3 nibbles"),
+                bytes: (0x21, 123),
                 expected: Instruction::CallSubroutine(379),
             },
             TestCase {
+                name: String::from("3--- - ValueEqualitySkip - 5"),
+                bytes: (0x3F, 0x05),
+                expected: Instruction::ValueEqualitySkip(15, 5),
+            },
+            TestCase {
+                name: String::from("3--- - ValueEqualitySkip - 21"),
+                bytes: (0x31, 0x15),
+                expected: Instruction::ValueEqualitySkip(1, 21),
+            },
+            TestCase {
+                name: String::from("3--- - ValueEqualitySkip - 80"),
+                bytes: (0x31, 0x50),
+                expected: Instruction::ValueEqualitySkip(1, 80),
+            },
+            TestCase {
+                name: String::from("3--- - ValueEqualitySkip - 255"),
+                bytes: (0x31, 0xFF),
+                expected: Instruction::ValueEqualitySkip(1, 255),
+            },
+            TestCase {
+                name: String::from("4--- - ValueInequalitySkip"),
+                bytes: (0x41, 0xFF),
+                expected: Instruction::ValueInequalitySkip(1, 255),
+            },
+            TestCase {
+                name: String::from("5--0 - RegisterEqualitySkip"),
+                bytes: (0x51, 0xF0),
+                expected: Instruction::RegisterEqualitySkip(1, 15),
+            },
+            TestCase {
+                name: String::from("5--0 - RegisterEqualitySkip"),
+                bytes: (0x5A, 0xC0),
+                expected: Instruction::RegisterEqualitySkip(10, 12),
+            },
+            TestCase {
+                name: String::from("7--- - AddRegisterNoFlag - 1 123"),
+                bytes: (0x71, 123),
+                expected: Instruction::AddRegisterNoFlag(1, 123),
+            },
+            TestCase {
+                name: String::from("7--- - AddRegisterNoFlag - 11 222"),
+                bytes: (0x7B, 222),
+                expected: Instruction::AddRegisterNoFlag(11, 222),
+            },
+            TestCase {
+                name: String::from("9--0 - RegisterInequalitySkip"),
+                bytes: (0x91, 0xF0),
+                expected: Instruction::RegisterInequalitySkip(1, 15),
+            },
+            TestCase {
+                name: String::from("9--0 - RegisterInequalitySkip"),
+                bytes: (0x9A, 0xC0),
+                expected: Instruction::RegisterInequalitySkip(10, 12),
+            },
+            TestCase {
+                name: String::from("9--0 - RegisterInequalitySkip"),
+                bytes: (0x91, 0xF0),
+                expected: Instruction::RegisterInequalitySkip(1, 15),
+            },
+            TestCase {
+                name: String::from("9--0 - RegisterInequalitySkip"),
+                bytes: (0x9A, 0xC0),
+                expected: Instruction::RegisterInequalitySkip(10, 12),
+            },
+            TestCase {
+                name: String::from("A--- - SetIndex 2 nibbles"),
+                bytes: (0xA0, 123),
+                expected: Instruction::SetIndex(123),
+            },
+            TestCase {
+                name: String::from("A--- - SetIndex 3 nibbles"),
+                bytes: (0xA1, 123),
+                expected: Instruction::SetIndex(379),
+            },
+            TestCase {
+                name: String::from("B--- - JumpWithRegisterOffset - 1 123"),
+                bytes: (0xB1, 123),
+                expected: Instruction::JumpWithRegisterOffset(1, 123),
+            },
+            TestCase {
+                name: String::from("C--- - Random - 1 123"),
+                bytes: (0xC1, 123),
+                expected: Instruction::Random(1, 123),
+            },
+            TestCase {
+                name: String::from("D--- - Draw - 1 12 42"),
+                bytes: (0xD1, 0xCF),
+                expected: Instruction::Draw(1, 12, 15),
+            },
+            TestCase {
                 name: String::from("NotImplemented"),
-                bytes: (255, 0),
+                bytes: (0xFF, 0),
                 expected: Instruction::NotImplemented,
             },
         ];
