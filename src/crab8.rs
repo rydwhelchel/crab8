@@ -1,8 +1,42 @@
+#![allow(dead_code)]
 //! Spec of Crab8 largely written as described here
 //! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
+use rand::{Rng, rng};
 use std::cmp::Ordering;
 
-#[allow(dead_code)]
+struct SubroutineStack {
+    /// Most roms do not make use of more than 2 spots in the stack.
+    stack: [u16; 16],
+    /// Pointer in the stack
+    sp: usize,
+}
+
+impl SubroutineStack {
+    pub fn new() -> SubroutineStack {
+        return SubroutineStack {
+            stack: [0; 16],
+            sp: 0,
+        };
+    }
+
+    pub fn push(&mut self, val: u16) {
+        if self.sp == self.stack.len() {
+            // Should theoretically be impossible with valid games
+            panic!("subroutine stackoverflow");
+        }
+        self.stack[self.sp] = val;
+        self.sp += 1;
+    }
+
+    pub fn pop(&mut self) -> u16 {
+        if self.sp == 0 {
+            panic!("subroutine stackunderflow");
+        }
+        self.sp -= 1;
+        self.stack[self.sp]
+    }
+}
+
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
@@ -11,6 +45,8 @@ pub struct Crab8 {
     /// numbered 0 through F hexadecimal, ie. 0 through 15 in
     /// decimal, called V0 through VF. VF is usually the flag register
     registers: [u8; 16],
+    /// The stack is for 16 bit addresses to get pushed to when working with subroutines.
+    stack: SubroutineStack,
     /// 32 rows of 64
     display: [[bool; 64]; 32],
 
@@ -59,12 +95,152 @@ impl Crab8 {
         return Crab8 {
             ram,
             registers: [0; 16],
+            stack: SubroutineStack::new(),
             display: [[false; 64]; 32],
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
             sound_timer: 0,
         };
+    }
+
+    fn execute_instruction(&mut self, ins: Instruction) {
+        match ins {
+            Instruction::ClearScreen => {
+                self.display = [[false; 64]; 32];
+            }
+            Instruction::Jump(loc) => {
+                self.pc = loc;
+            }
+            Instruction::CallSubroutine(loc) => {
+                self.stack.push(self.pc);
+                self.pc = loc;
+            }
+            Instruction::ReturnSubroutine => {
+                self.pc = self.stack.pop();
+            }
+            Instruction::ValueEqualitySkip(vx, value) => {
+                if self.registers[vx as usize] == value {
+                    // Skip NEXT instruction
+                    self.pc += 2;
+                }
+            }
+            Instruction::ValueInequalitySkip(vx, value) => {
+                if self.registers[vx as usize] != value {
+                    // Skip NEXT instruction
+                    self.pc += 2;
+                }
+            }
+            Instruction::RegisterEqualitySkip(vx, vy) => {
+                if self.registers[vx as usize] == self.registers[vy as usize] {
+                    // Skip NEXT instruction
+                    self.pc += 2;
+                }
+            }
+            Instruction::RegisterInequalitySkip(vx, vy) => {
+                if self.registers[vx as usize] != self.registers[vy as usize] {
+                    // Skip NEXT instruction
+                    self.pc += 2;
+                }
+            }
+            Instruction::SetRegisterToValue(vx, value) => {
+                self.registers[vx as usize] = value;
+            }
+            Instruction::AddToRegisterNoFlag(_vx, _value) => {
+                todo!("figure out how to deal with overflow");
+            }
+            Instruction::SetRegisterToRegister(vx, vy) => {
+                self.registers[vx as usize] = self.registers[vy as usize];
+            }
+            Instruction::OrRegister(vx, vy) => {
+                self.registers[vx as usize] |= self.registers[vy as usize];
+            }
+            Instruction::AndRegister(vx, vy) => {
+                self.registers[vx as usize] &= self.registers[vy as usize];
+            }
+            Instruction::XorRegister(vx, vy) => {
+                self.registers[vx as usize] ^= self.registers[vy as usize];
+            }
+            Instruction::AddRegisterToRegisterWithFlag(_vx, _vy) => {
+                todo!("figure out how to deal with overflow");
+            }
+            Instruction::SubtractXYRegisterWithFlag(_vx, _vy) => {
+                todo!("figure out how to deal with overflow");
+            }
+            Instruction::SubtractYXRegisterWithFlag(_vx, _vy) => {
+                todo!("figure out how to deal with overflow");
+            }
+            Instruction::ShiftRight(_vx, _vy) => {
+                todo!("figure out how to capture bit shifted out, decide how to handle config")
+            }
+            Instruction::ShiftLeft(_vx, _vy) => {
+                todo!("figure out how to capture bit shifted out, decide how to handle config")
+            }
+            Instruction::SetIndex(value) => {
+                self.i = value;
+            }
+            Instruction::JumpWithRegisterOffset(_vx, _value) => {
+                todo!("decide how to handle config")
+            }
+            Instruction::Random(vx, value) => {
+                let ran_value: u8 = rng().random();
+                self.registers[vx as usize] = ran_value & value;
+            }
+            Instruction::Draw(vx, vy, n) => {
+                let (x, y) = (
+                    // mod 64
+                    (self.registers[vx as usize] & 63) as usize,
+                    // mod 32
+                    (self.registers[vy as usize] & 31) as usize,
+                );
+                // TODO: Improve (remove vec if possible)
+                let mut sprite: Vec<u8> = Vec::new();
+                for i in 0..n {
+                    // get n bytes of the sprite
+                    sprite.push(self.ram[(self.i + i as u16) as usize]);
+                }
+                for line in sprite {
+                    let rev_line: u8 = line.reverse_bits();
+                    for i in 0..8 {
+                        // if we're about to go off the screen, stop drawing row
+                        if x > self.display[y].len() {
+                            break;
+                        }
+                        // if curr bit in the sprite is on
+                        if (rev_line >> i) & 1 == 1 {
+                            // set flag if it turns off a bit
+                            if self.display[y][x + i] {
+                                self.registers[0xF] = 1;
+                            }
+                            // flip pixel on/off
+                            self.display[y][x + i] = !self.display[y][x + i];
+                        }
+                    }
+                }
+            }
+            Instruction::SkipIfPressed(vx) => {
+                todo!("implement key press detection");
+            }
+            Instruction::SkipIfNotPressed(vx) => {
+                todo!("implement key press detection");
+            }
+            Instruction::GetDelayTimer(vx) => {
+                self.registers[vx as usize] = self.delay_timer;
+            }
+            Instruction::SetDelayTimer(vx) => {
+                self.delay_timer = self.registers[vx as usize];
+            }
+            Instruction::SetSoundTimer(vx) => {
+                self.sound_timer = self.registers[vx as usize];
+            }
+            Instruction::AddToIndex(vx) => {
+                todo!("Read into flag overflow");
+                //self.i += self.registers[vx as usize];
+            }
+            Instruction::GetKey(vx) => {
+                todo!("implement key press detection");
+            }
+        }
     }
 }
 
@@ -126,7 +302,7 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
         ),
-        '7' => Instruction::AddRegisterNoFlag(
+        '7' => Instruction::AddToRegisterNoFlag(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
         ),
@@ -147,7 +323,7 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
             ),
-            '4' => Instruction::AddRegisterWithFlag(
+            '4' => Instruction::AddRegisterToRegisterWithFlag(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
             ),
@@ -249,23 +425,23 @@ enum Instruction {
     /// 00EE, PC == stack.pop
     ReturnSubroutine,
 
-    /// (X, NN) 3XNN, VX == NN
+    /// (X, NN) 3XNN, VX == NN then skip next instruction
     ValueEqualitySkip(u8, u8),
 
-    /// (X, NN) 4XNN, VX != NN
+    /// (X, NN) 4XNN, VX != NN then skip next instruction
     ValueInequalitySkip(u8, u8),
 
-    /// (X, Y) 5XY0, VX == VY
+    /// (X, Y) 5XY0, VX == VY then skip next instruction
     RegisterEqualitySkip(u8, u8),
 
-    /// (X, Y) 9XY0, VX != VY
+    /// (X, Y) 9XY0, VX != VY then skip next instruction
     RegisterInequalitySkip(u8, u8),
 
     /// (X, NN) 6XNN, VX = NN
     SetRegisterToValue(u8, u8),
 
     /// (X, NN) 7XNN, VX += NN     and do NOT update carry flag
-    AddRegisterNoFlag(u8, u8),
+    AddToRegisterNoFlag(u8, u8),
 
     /// (X, Y) 8XY0, VX = VY
     SetRegisterToRegister(u8, u8),
@@ -280,7 +456,7 @@ enum Instruction {
     XorRegister(u8, u8),
 
     /// (X, Y) 8XY4, VX += VY     and DO update carry flag
-    AddRegisterWithFlag(u8, u8),
+    AddRegisterToRegisterWithFlag(u8, u8),
 
     /// (X, Y) 8XY5, VX -= VY     and VF = if VX>=VY {1} else {0}
     SubtractXYRegisterWithFlag(u8, u8),
@@ -425,12 +601,12 @@ mod tests {
             TestCase {
                 name: String::from("7--- - AddRegisterNoFlag - 1 123"),
                 bytes: (0x71, 123),
-                expected: Instruction::AddRegisterNoFlag(1, 123),
+                expected: Instruction::AddToRegisterNoFlag(1, 123),
             },
             TestCase {
                 name: String::from("7--- - AddRegisterNoFlag - 11 222"),
                 bytes: (0x7B, 222),
-                expected: Instruction::AddRegisterNoFlag(11, 222),
+                expected: Instruction::AddToRegisterNoFlag(11, 222),
             },
             TestCase {
                 name: String::from("9--0 - RegisterInequalitySkip"),
