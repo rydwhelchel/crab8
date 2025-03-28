@@ -2,7 +2,7 @@
 //! Spec of Crab8 largely written as described here
 //! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
 use rand::{Rng, rng};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fs::File};
 
 struct SubroutineStack {
     /// Most roms do not make use of more than 2 spots in the stack.
@@ -63,6 +63,9 @@ pub struct Crab8 {
     delay_timer: u8,
     /// Ticks down 60 times per second, beeps all the while
     sound_timer: u8,
+
+    // Not part of the original crab8, just have it for debug purposes
+    cycles: usize,
 }
 
 impl Crab8 {
@@ -101,11 +104,53 @@ impl Crab8 {
             i: 0,
             delay_timer: 0,
             sound_timer: 0,
+            cycles: 0,
         };
+    }
+
+    pub fn load_rom(&mut self, name: &str) {
+        let rom_contents = match std::fs::read("./roms/".to_string() + name) {
+            Ok(contents) => contents,
+            Err(error) => panic!("{}", error),
+        };
+
+        for i in 0..rom_contents.len() {
+            self.ram[Self::OFFSET as usize + i] = rom_contents[i];
+        }
+    }
+
+    pub fn start(&mut self) {
+        // TODO: Should limit loop speed to ~700 cycles per second in order to avoid having too
+        // high of an update speed.
+        loop {
+            self.cycle()
+        }
+    }
+
+    pub fn display(&self) -> [[bool; 64]; 32] {
+        return self.display;
+    }
+
+    fn cycle(&mut self) {
+        if self.pc as usize >= self.ram.len() {
+            panic!("pc reached out of bounds on RAM")
+        }
+        self.execute_instruction(parse_instruction((
+            self.ram[self.pc as usize],
+            self.ram[self.pc as usize + 1],
+        )));
+        self.pc += 2;
+
+        // unneeded
+        println!("Cycles: {}", self.cycles);
+        self.cycles += 1;
     }
 
     fn execute_instruction(&mut self, ins: Instruction) {
         match ins {
+            Instruction::ExecuteMachineLangaugeRoutine(_value) => {
+                todo!("do I want to log something on this branch? do I want to implement?")
+            }
             Instruction::ClearScreen => {
                 self.display = [[false; 64]; 32];
             }
@@ -218,10 +263,10 @@ impl Crab8 {
                     }
                 }
             }
-            Instruction::SkipIfPressed(vx) => {
+            Instruction::SkipIfPressed(_vx) => {
                 todo!("implement key press detection");
             }
-            Instruction::SkipIfNotPressed(vx) => {
+            Instruction::SkipIfNotPressed(_vx) => {
                 todo!("implement key press detection");
             }
             Instruction::GetDelayTimer(vx) => {
@@ -233,13 +278,14 @@ impl Crab8 {
             Instruction::SetSoundTimer(vx) => {
                 self.sound_timer = self.registers[vx as usize];
             }
-            Instruction::AddToIndex(vx) => {
+            Instruction::AddToIndex(_vx) => {
                 todo!("Read into flag overflow");
                 //self.i += self.registers[vx as usize];
             }
-            Instruction::GetKey(vx) => {
+            Instruction::GetKey(_vx) => {
                 todo!("implement key press detection");
             }
+            _ => todo!(),
         }
     }
 }
@@ -260,7 +306,6 @@ fn compare_ins_remainder(ins: &str, comp: String) -> bool {
 fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     let instruction: String = format!("{:04x}", combine_bytes(bytes));
 
-    println!("{}", instruction);
     // Unwrapping directly because above format string should always have 4 characters
     match instruction.chars().nth(0).unwrap() {
         '0' => {
