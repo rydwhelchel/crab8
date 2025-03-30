@@ -6,7 +6,11 @@ mod display;
 use display::Display;
 use log::debug;
 use rand::{Rng, rng};
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    io::{Stdin, Stdout},
+};
+use termion::{raw::RawTerminal, screen::AlternateScreen};
 
 struct SubroutineStack {
     /// Most roms do not make use of more than 2 spots in the stack.
@@ -41,7 +45,7 @@ impl SubroutineStack {
     }
 }
 
-pub struct Crab8 {
+pub struct Crab8<'a> {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
     ram: [u8; 4096],
@@ -52,7 +56,8 @@ pub struct Crab8 {
     /// The stack is for 16 bit addresses to get pushed to when working with subroutines.
     stack: SubroutineStack,
     /// 32 rows of 64
-    display: Display,
+    display: Display<'a>,
+    stdin: Stdin,
 
     // Pointers
     // NOTE: Consider setting pointers to usize instead for ease of use.
@@ -72,7 +77,7 @@ pub struct Crab8 {
     cycles: usize,
 }
 
-impl Crab8 {
+impl Crab8<'_> {
     /// PC starts at 0x200 (512) because chip8 used to store its
     /// own internal workings in the first 512 addresses.
     const OFFSET: u16 = 0x200;
@@ -96,14 +101,20 @@ impl Crab8 {
         0xF0, 0x80, 0xF0, 0x80, 0x80, // F
     ];
 
-    pub fn new() -> Crab8 {
+    fn get_font_addr(val: u8) -> u16 {
+        let hex_val = val % 16;
+        (hex_val * 5).into()
+    }
+
+    pub fn new(stdin: Stdin, screen: &mut AlternateScreen<RawTerminal<Stdout>>) -> Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
         return Crab8 {
             ram,
             registers: [0; 16],
             stack: SubroutineStack::new(),
-            display: Display::new(),
+            display: Display::new(screen),
+            stdin,
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
@@ -154,7 +165,7 @@ impl Crab8 {
         debug!("Executing ins {:?}", ins);
         match ins {
             Instruction::ExecuteMachineLangaugeRoutine(_value) => {
-                todo!("do I want to log something on this branch? do I want to implement?")
+                panic!("attempted to execute machine language routine, exiting")
             }
             Instruction::ClearScreen => {
                 self.display.clear_screen();
@@ -198,8 +209,8 @@ impl Crab8 {
             Instruction::SetRegisterToValue(vx, value) => {
                 self.registers[vx as usize] = value;
             }
-            Instruction::AddToRegisterNoFlag(_vx, _value) => {
-                todo!("figure out how to deal with overflow");
+            Instruction::AddToRegisterNoFlag(vx, value) => {
+                self.registers[vx as usize] = self.registers[vx as usize].wrapping_add(value);
             }
             Instruction::SetRegisterToRegister(vx, vy) => {
                 self.registers[vx as usize] = self.registers[vy as usize];
@@ -213,26 +224,49 @@ impl Crab8 {
             Instruction::XorRegister(vx, vy) => {
                 self.registers[vx as usize] ^= self.registers[vy as usize];
             }
-            Instruction::AddRegisterToRegisterWithFlag(_vx, _vy) => {
-                todo!("figure out how to deal with overflow");
+            Instruction::AddRegisterToRegisterWithFlag(vx, vy) => {
+                let (new_val, overflowed) =
+                    self.registers[vx as usize].overflowing_add(self.registers[vy as usize]);
+                self.registers[vx as usize] = new_val;
+                self.registers[0xF] = overflowed.into();
             }
-            Instruction::SubtractXYRegisterWithFlag(_vx, _vy) => {
-                todo!("figure out how to deal with overflow");
+            Instruction::SubtractXYRegisterWithFlag(vx, vy) => {
+                let (new_val, overflowed) =
+                    self.registers[vx as usize].overflowing_sub(self.registers[vy as usize]);
+                self.registers[vx as usize] = new_val;
+                // flag is set to 1 if an overflow does NOT occur
+                self.registers[0xF] = (!overflowed).into();
             }
-            Instruction::SubtractYXRegisterWithFlag(_vx, _vy) => {
-                todo!("figure out how to deal with overflow");
+            Instruction::SubtractYXRegisterWithFlag(vx, vy) => {
+                let (new_val, overflowed) =
+                    self.registers[vy as usize].overflowing_sub(self.registers[vx as usize]);
+                self.registers[vx as usize] = new_val;
+                // flag is set to 1 if an overflow does NOT occur
+                self.registers[0xF] = (!overflowed).into();
             }
-            Instruction::ShiftRight(_vx, _vy) => {
-                todo!("figure out how to capture bit shifted out, decide how to handle config")
+            // FIXME: Using the simple implementation for now, come back later and add configurable
+            // behavior - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
+            // early 90s, vy started getting completely ignored
+            Instruction::ShiftRight(vx, _vy) => {
+                // Capture the right bit before it gets shifted out
+                let shifted_out = self.registers[vx as usize] & 0b00000001;
+                self.registers[vx as usize] = self.registers[vx as usize] >> 1;
+                self.registers[0xF] = shifted_out;
             }
-            Instruction::ShiftLeft(_vx, _vy) => {
-                todo!("figure out how to capture bit shifted out, decide how to handle config")
+            // FIXME:
+            Instruction::ShiftLeft(vx, _vy) => {
+                // Capture the right bit before it gets shifted out
+                let shifted_out = self.registers[vx as usize] & 0b10000000;
+                self.registers[vx as usize] = self.registers[vx as usize] << 1;
+                self.registers[0xF] = shifted_out;
             }
             Instruction::SetIndex(value) => {
                 self.i = value;
             }
-            Instruction::JumpWithRegisterOffset(_vx, _value) => {
-                todo!("decide how to handle config")
+            // FIXME: Add config COSMAC VIP uses BNNN, goes to address NNN + V0
+            // We're using the newer implementation BXNN, XNN + VX
+            Instruction::JumpWithRegisterOffset(vx, value) => {
+                self.pc = self.registers[vx as usize] as u16 + value;
             }
             Instruction::Random(vx, value) => {
                 let ran_value: u8 = rng().random();
@@ -240,10 +274,8 @@ impl Crab8 {
             }
             Instruction::Draw(vx, vy, n) => {
                 let (x, y) = (
-                    // mod 64
-                    (self.registers[vx as usize] & 63),
-                    // mod 32
-                    (self.registers[vy as usize] & 31),
+                    (self.registers[vx as usize] % 64),
+                    (self.registers[vy as usize] % 32),
                 );
                 // TODO: Improve (remove vec if possible)
                 let mut sprite: Vec<u8> = Vec::new();
@@ -268,12 +300,46 @@ impl Crab8 {
             Instruction::SetSoundTimer(vx) => {
                 self.sound_timer = self.registers[vx as usize];
             }
-            Instruction::AddToIndex(_vx) => {
-                todo!("Read into flag overflow");
-                //self.i += self.registers[vx as usize];
+            Instruction::AddToIndex(vx) => {
+                // NOTE: This is technically not how the COSMAC VIP worked, but no known games rely
+                // on previous behavior
+                let (new_val, overflowed) =
+                    self.i.overflowing_add(self.registers[vx as usize] as u16);
+                self.i = new_val;
+                self.registers[0xF] = overflowed.into();
             }
             Instruction::GetKey(_vx) => {
                 todo!("implement key press detection");
+            }
+            Instruction::FontCharacter(vx) => {
+                self.i = Self::get_font_addr(self.registers[vx as usize]);
+            }
+            // TODO: Find out if this needs to be dynamic (if a number is only 2 digits, only
+            // replace 2 spots in ram) or if it should always replace, even leading 0s
+            Instruction::DecimalConversion(vx) => {
+                let x = self.registers[vx as usize];
+                let (hundreds, tens, ones) = (x / 100, (x / 10) % 10, x % 10);
+
+                assert!(
+                    ((self.i + 2) as usize) < self.ram.len(),
+                    "attempted to insert decimal conversion outside of ram"
+                );
+
+                self.ram[self.i as usize] = hundreds;
+                self.ram[(self.i + 1) as usize] = tens;
+                self.ram[(self.i + 2) as usize] = ones;
+            }
+            // FIXME: Add config for older behavior, though it is supposedly not very common
+            Instruction::StoreMemory(vx) => {
+                for i in 0..vx {
+                    self.ram[(self.i + i as u16) as usize] = self.registers[(vx + i) as usize];
+                }
+            }
+            // FIXME: Add config for older behavior, though it is supposedly not very common
+            Instruction::LoadMemory(vx) => {
+                for i in 0..vx {
+                    self.registers[(vx + i) as usize] = self.ram[(self.i + i as u16) as usize]
+                }
             }
             //Instruction::NotImplemented => {}
             _ => todo!(),
@@ -394,7 +460,8 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
         'a' => Instruction::SetIndex(u16::from_str_radix(&instruction[1..4], 16).unwrap()),
         'b' => Instruction::JumpWithRegisterOffset(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
-            u8::from_str_radix(&instruction[2..4], 16).unwrap(),
+            // NOTE: This double parses the second value INTENTIONALLY. Weird instruction
+            u16::from_str_radix(&instruction[1..4], 16).unwrap(),
         ),
         'c' => Instruction::Random(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
@@ -422,9 +489,9 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
                 Instruction::SetDelayTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
             } else if compare_ins_remainder(&instruction, String::from("18")) {
                 Instruction::SetSoundTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
-            } else if compare_ins_remainder(&instruction, String::from("1E")) {
+            } else if compare_ins_remainder(&instruction, String::from("1e")) {
                 Instruction::AddToIndex(u8::from_str_radix(&instruction[1..2], 16).unwrap())
-            } else if compare_ins_remainder(&instruction, String::from("0A")) {
+            } else if compare_ins_remainder(&instruction, String::from("0a")) {
                 Instruction::GetKey(u8::from_str_radix(&instruction[1..2], 16).unwrap())
             } else if compare_ins_remainder(&instruction, String::from("29")) {
                 Instruction::FontCharacter(u8::from_str_radix(&instruction[1..2], 16).unwrap())
@@ -509,8 +576,8 @@ enum Instruction {
     /// (NNN) ANNN, i = NNN
     SetIndex(u16),
 
-    /// (X, NN) BXNN, GOTO NN + VX AND DIFFERENTLY BNNN, GOTO NNN + V0 -- Allow program to configure this
-    JumpWithRegisterOffset(u8, u8),
+    /// (X, NN) BXNN, GOTO XNN + VX AND DIFFERENTLY BNNN, GOTO NNN + V0 -- Allow program to configure this
+    JumpWithRegisterOffset(u8, u16),
 
     /// (X, NN) CXNN, VX = randomInt & NN
     Random(u8, u8),
@@ -561,136 +628,197 @@ mod tests {
 
     #[test]
     fn test_parse_instruction() {
-        struct TestCase {
-            name: String,
+        struct TestCase<'a> {
+            name: &'a str,
             bytes: (u8, u8),
             expected: Instruction,
         }
-
+        // NOTE: Downside of table testing this way is that all tests are treated as one and if one
+        // fails it does not test the remaining cases
         let test_cases: Vec<TestCase> = vec![
             TestCase {
-                name: String::from("00E0 - ClearScreen"),
+                name: "00E0 - ClearScreen",
                 bytes: (0x00, 0xE0),
                 expected: Instruction::ClearScreen,
             },
             TestCase {
-                name: String::from("00EE - ReturnSubroutine"),
+                name: "00EE - ReturnSubroutine",
                 bytes: (0x00, 0xEE),
                 expected: Instruction::ReturnSubroutine,
             },
             TestCase {
-                name: String::from("1--- - Jump 2 nibbles"),
+                name: "1--- - Jump 2 nibbles",
                 bytes: (0x10, 123),
                 expected: Instruction::Jump(123),
             },
             TestCase {
                 // Jump takes 3 hex values, so the the leftover 1 from first byte adds to value
-                name: String::from("1--- - Jump 3 nibbles"),
+                name: "1--- - Jump 3 nibbles",
                 bytes: (0x11, 123),
                 expected: Instruction::Jump(379),
             },
             TestCase {
-                name: String::from("2--- - CallSubroutine 2 nibbles"),
+                name: "2--- - CallSubroutine 2 nibbles",
                 bytes: (0x20, 123),
                 expected: Instruction::CallSubroutine(123),
             },
             TestCase {
-                name: String::from("2--- - CallSubroutine 3 nibbles"),
+                name: "2--- - CallSubroutine 3 nibbles",
                 bytes: (0x21, 123),
                 expected: Instruction::CallSubroutine(379),
             },
             TestCase {
-                name: String::from("3--- - ValueEqualitySkip - 5"),
+                name: "3--- - ValueEqualitySkip - 5",
                 bytes: (0x3F, 0x05),
                 expected: Instruction::ValueEqualitySkip(15, 5),
             },
             TestCase {
-                name: String::from("3--- - ValueEqualitySkip - 21"),
+                name: "3--- - ValueEqualitySkip - 21",
                 bytes: (0x31, 0x15),
                 expected: Instruction::ValueEqualitySkip(1, 21),
             },
             TestCase {
-                name: String::from("3--- - ValueEqualitySkip - 80"),
+                name: "3--- - ValueEqualitySkip - 80",
                 bytes: (0x31, 0x50),
                 expected: Instruction::ValueEqualitySkip(1, 80),
             },
             TestCase {
-                name: String::from("3--- - ValueEqualitySkip - 255"),
+                name: "3--- - ValueEqualitySkip - 255",
                 bytes: (0x31, 0xFF),
                 expected: Instruction::ValueEqualitySkip(1, 255),
             },
             TestCase {
-                name: String::from("4--- - ValueInequalitySkip"),
+                name: "4--- - ValueInequalitySkip",
                 bytes: (0x41, 0xFF),
                 expected: Instruction::ValueInequalitySkip(1, 255),
             },
             TestCase {
-                name: String::from("5--0 - RegisterEqualitySkip"),
+                name: "5--0 - RegisterEqualitySkip",
                 bytes: (0x51, 0xF0),
                 expected: Instruction::RegisterEqualitySkip(1, 15),
             },
             TestCase {
-                name: String::from("5--0 - RegisterEqualitySkip"),
+                name: "5--0 - RegisterEqualitySkip",
                 bytes: (0x5A, 0xC0),
                 expected: Instruction::RegisterEqualitySkip(10, 12),
             },
             TestCase {
-                name: String::from("7--- - AddRegisterNoFlag - 1 123"),
+                name: "7--- - AddRegisterNoFlag - 1 123",
                 bytes: (0x71, 123),
                 expected: Instruction::AddToRegisterNoFlag(1, 123),
             },
             TestCase {
-                name: String::from("7--- - AddRegisterNoFlag - 11 222"),
+                name: "7--- - AddRegisterNoFlag - 11 222",
                 bytes: (0x7B, 222),
                 expected: Instruction::AddToRegisterNoFlag(11, 222),
             },
             TestCase {
-                name: String::from("9--0 - RegisterInequalitySkip"),
+                name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x91, 0xF0),
                 expected: Instruction::RegisterInequalitySkip(1, 15),
             },
             TestCase {
-                name: String::from("9--0 - RegisterInequalitySkip"),
+                name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x9A, 0xC0),
                 expected: Instruction::RegisterInequalitySkip(10, 12),
             },
             TestCase {
-                name: String::from("9--0 - RegisterInequalitySkip"),
+                name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x91, 0xF0),
                 expected: Instruction::RegisterInequalitySkip(1, 15),
             },
             TestCase {
-                name: String::from("9--0 - RegisterInequalitySkip"),
+                name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x9A, 0xC0),
                 expected: Instruction::RegisterInequalitySkip(10, 12),
             },
             TestCase {
-                name: String::from("A--- - SetIndex 2 nibbles"),
+                name: "A--- - SetIndex 2 nibbles",
                 bytes: (0xA0, 123),
                 expected: Instruction::SetIndex(123),
             },
             TestCase {
-                name: String::from("A--- - SetIndex 3 nibbles"),
+                name: "A--- - SetIndex 3 nibbles",
                 bytes: (0xA1, 123),
                 expected: Instruction::SetIndex(379),
             },
             TestCase {
-                name: String::from("B--- - JumpWithRegisterOffset - 1 123"),
+                name: "B--- - JumpWithRegisterOffset - 1 123",
                 bytes: (0xB1, 123),
-                expected: Instruction::JumpWithRegisterOffset(1, 123),
+                expected: Instruction::JumpWithRegisterOffset(1, 379),
             },
             TestCase {
-                name: String::from("C--- - Random - 1 123"),
+                name: "C--- - Random - 1 123",
                 bytes: (0xC1, 123),
                 expected: Instruction::Random(1, 123),
             },
             TestCase {
-                name: String::from("D--- - Draw - 1 12 42"),
+                name: "D--- - Draw - 1 12 42",
                 bytes: (0xD1, 0xCF),
                 expected: Instruction::Draw(1, 12, 15),
             },
             TestCase {
-                name: String::from("NotImplemented"),
+                name: "E-9E - SkipIfPressed - 12",
+                bytes: (0xEC, 0x9E),
+                expected: Instruction::SkipIfPressed(12),
+            },
+            TestCase {
+                name: "E-A1 - SkipIfNotPressed - 15",
+                bytes: (0xEF, 0xA1),
+                expected: Instruction::SkipIfNotPressed(15),
+            },
+            TestCase {
+                name: "E-XX - NotImplemented",
+                bytes: (0xEF, 0xF1),
+                expected: Instruction::NotImplemented,
+            },
+            TestCase {
+                name: "F-07 - GetDelayTimer - 10",
+                bytes: (0xFA, 0x07),
+                expected: Instruction::GetDelayTimer(10),
+            },
+            TestCase {
+                name: "F-15 - SetDelayTimer - 10",
+                bytes: (0xFA, 0x15),
+                expected: Instruction::SetDelayTimer(10),
+            },
+            TestCase {
+                name: "F-18 - SetSoundTimer - 11",
+                bytes: (0xFB, 0x18),
+                expected: Instruction::SetSoundTimer(11),
+            },
+            TestCase {
+                name: "F-1E - AddToIndex - 7",
+                bytes: (0xF7, 0x1E),
+                expected: Instruction::AddToIndex(7),
+            },
+            TestCase {
+                name: "F-0A - GetKey - 9",
+                bytes: (0xF9, 0x0A),
+                expected: Instruction::GetKey(9),
+            },
+            TestCase {
+                name: "F-29 - FontCharacter - 9",
+                bytes: (0xF9, 0x29),
+                expected: Instruction::FontCharacter(9),
+            },
+            TestCase {
+                name: "F-33 - DecimalConversion - 9",
+                bytes: (0xF9, 0x33),
+                expected: Instruction::DecimalConversion(9),
+            },
+            TestCase {
+                name: "F-55 - StoreMemory - 9",
+                bytes: (0xF9, 0x55),
+                expected: Instruction::StoreMemory(9),
+            },
+            TestCase {
+                name: "F-65 - LoadMemory - 9",
+                bytes: (0xF9, 0x65),
+                expected: Instruction::LoadMemory(9),
+            },
+            TestCase {
+                name: "NotImplemented",
                 bytes: (0xFF, 0),
                 expected: Instruction::NotImplemented,
             },
@@ -707,4 +835,7 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_execute_instruction() {}
 }

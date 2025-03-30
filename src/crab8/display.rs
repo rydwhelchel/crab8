@@ -1,11 +1,23 @@
-pub struct Display {
+use std::io::Stdout;
+
+use std::io::Write;
+use termion::{raw::RawTerminal, screen::AlternateScreen};
+
+pub struct Display<'a> {
     raw: [[bool; 64]; 32],
+    screen: &'a mut AlternateScreen<RawTerminal<Stdout>>,
 }
 
-impl Display {
-    pub fn new() -> Display {
+impl Display<'_> {
+    const SOLID_BLOCK: char = '█';
+    const LOWER_HALF_BLOCK: char = '▄';
+    const UPPER_HALF_BLOCK: char = '▀';
+    const EMPTY_BLOCK: char = ' ';
+
+    pub fn new(screen: &mut AlternateScreen<RawTerminal<Stdout>>) -> Display {
         return Display {
             raw: [[false; 64]; 32],
+            screen,
         };
     }
 
@@ -36,10 +48,42 @@ impl Display {
                 }
             }
         }
+        self.render();
         return flipped;
     }
 
     // TODO: This should take the current raw state and output it to term
     // prob using termion
-    fn render() {}
+    //
+    // revisit w/ https://github.com/redox-os/games/blob/master/src/minesweeper/main.rs
+    fn render(&mut self) {
+        let mut i = 0;
+        let mut line = String::new();
+        // render 2 lines at a time
+        while i < self.raw.len() - 1 {
+            for j in 0..self.raw[i].len() {
+                if self.raw[i][j] && self.raw[i + 1][j] {
+                    line.push(Self::SOLID_BLOCK);
+                } else if self.raw[i][j] && !self.raw[i + 1][j] {
+                    line.push(Self::UPPER_HALF_BLOCK);
+                } else if !self.raw[i][j] && self.raw[i + 1][j] {
+                    line.push(Self::LOWER_HALF_BLOCK);
+                } else if !self.raw[i][j] && !self.raw[i + 1][j] {
+                    line.push(Self::EMPTY_BLOCK);
+                }
+            }
+            line.push('\n');
+            i += 2;
+        }
+        // idk what I'm doing :)
+        write!(
+            self.screen,
+            "{}{}{}",
+            termion::clear::All,
+            termion::cursor::Goto(1, 1),
+            line
+        )
+        .unwrap();
+        self.screen.flush().unwrap();
+    }
 }
