@@ -1,23 +1,16 @@
-use std::io::Stdout;
-
-use std::io::Write;
-use termion::{raw::RawTerminal, screen::AlternateScreen};
-
-pub struct Display<'a> {
+pub struct Display {
     raw: [[bool; 64]; 32],
-    screen: &'a mut AlternateScreen<RawTerminal<Stdout>>,
 }
 
-impl Display<'_> {
+impl Display {
     const SOLID_BLOCK: char = '█';
     const LOWER_HALF_BLOCK: char = '▄';
     const UPPER_HALF_BLOCK: char = '▀';
     const EMPTY_BLOCK: char = ' ';
 
-    pub fn new(screen: &mut AlternateScreen<RawTerminal<Stdout>>) -> Display {
+    pub fn new() -> Display {
         return Display {
             raw: [[false; 64]; 32],
-            screen,
         };
     }
 
@@ -30,8 +23,8 @@ impl Display<'_> {
         let x = coords.0 as usize;
         let y = coords.1 as usize;
         let mut flipped = false;
-        for line in sprite {
-            let rev_line: u8 = line.reverse_bits();
+        for sprite_y in 0..sprite.len() {
+            let rev_line: u8 = sprite[sprite_y].reverse_bits();
             for i in 0..8 {
                 // if we're about to go off the screen, stop drawing row
                 if x > self.raw[y].len() {
@@ -40,22 +33,23 @@ impl Display<'_> {
                 // if curr bit in the sprite is on
                 if (rev_line >> i) & 1 == 1 {
                     // set flag if it turns off a bit
-                    if self.raw[y][x + i] {
+                    if self.raw[y + sprite_y][x + i] {
                         flipped = true;
                     }
                     // flip pixel on/off
-                    self.raw[y][x + i] = !self.raw[y][x + i];
+                    self.raw[y + sprite_y][x + i] = !self.raw[y + sprite_y][x + i];
                 }
             }
         }
         self.render();
-        return flipped;
+        flipped
     }
 
     // TODO: This should take the current raw state and output it to term
     // prob using termion
-    //
     // revisit w/ https://github.com/redox-os/games/blob/master/src/minesweeper/main.rs
+    //
+    //prob gonna try crossterm instead
     fn render(&mut self) {
         let mut i = 0;
         let mut line = String::new();
@@ -75,15 +69,36 @@ impl Display<'_> {
             line.push('\n');
             i += 2;
         }
+        // {esc}[2J
+
+        print!("{}[2;1H", 27 as char);
+        println!("{}", line);
         // idk what I'm doing :)
-        write!(
-            self.screen,
-            "{}{}{}",
-            termion::clear::All,
-            termion::cursor::Goto(1, 1),
-            line
-        )
-        .unwrap();
-        self.screen.flush().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Display;
+
+    #[test]
+    fn test_draw() {
+        let mut display: &mut Display = &mut Display::new();
+        _ = display.draw((0, 0), vec![0xFF]);
+
+        let mut expected_display: [[bool; 64]; 32] = [[false; 64]; 32];
+        for i in 0..8 {
+            expected_display[0][i] = true;
+        }
+
+        assert_eq!(expected_display, display.raw);
+
+        _ = display.draw((1, 1), vec![0xFF, 0xFF]);
+        for i in 1..9 {
+            expected_display[1][i] = true;
+            expected_display[2][i] = true;
+        }
+
+        assert_eq!(expected_display, display.raw);
     }
 }

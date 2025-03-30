@@ -7,7 +7,6 @@ edition = "2024"
 env_logger = "0.11.7"
 log = "0.4.27"
 rand = { version = "0.9.0", features = ["small_rng"] }
-termion = "4.0.4"
 
 # TODO: Consider if below optimizations are needed
 # Enable a small amount of optimization in the dev profile.

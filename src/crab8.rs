@@ -6,13 +6,9 @@ mod display;
 use display::Display;
 use log::debug;
 use rand::{Rng, rng};
-use std::{
-    cmp::Ordering,
-    io::{Stdin, Stdout},
-};
-use termion::{raw::RawTerminal, screen::AlternateScreen};
+use std::cmp::Ordering;
 
-pub struct Crab8<'a> {
+pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
     ram: [u8; 4096],
@@ -23,8 +19,7 @@ pub struct Crab8<'a> {
     /// The stack is for 16 bit addresses to get pushed to when working with subroutines.
     stack: SubroutineStack,
     /// 32 rows of 64
-    display: Display<'a>,
-    stdin: Stdin,
+    display: Display,
 
     // Pointers
     // NOTE: Consider setting pointers to usize instead for ease of use.
@@ -44,7 +39,7 @@ pub struct Crab8<'a> {
     cycles: usize,
 }
 
-impl Crab8<'_> {
+impl Crab8 {
     /// PC starts at 0x200 (512) because chip8 used to store its
     /// own internal workings in the first 512 addresses.
     const OFFSET: u16 = 0x200;
@@ -73,15 +68,14 @@ impl Crab8<'_> {
         (hex_val * 5).into()
     }
 
-    pub fn new(stdin: Stdin, screen: &mut AlternateScreen<RawTerminal<Stdout>>) -> Crab8 {
+    pub fn new() -> Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
         return Crab8 {
             ram,
             registers: [0; 16],
             stack: SubroutineStack::new(),
-            display: Display::new(screen),
-            stdin,
+            display: Display::new(),
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
