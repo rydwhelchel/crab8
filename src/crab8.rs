@@ -12,39 +12,6 @@ use std::{
 };
 use termion::{raw::RawTerminal, screen::AlternateScreen};
 
-struct SubroutineStack {
-    /// Most roms do not make use of more than 2 spots in the stack.
-    stack: [u16; 16],
-    /// Pointer in the stack
-    sp: usize,
-}
-
-impl SubroutineStack {
-    pub fn new() -> SubroutineStack {
-        return SubroutineStack {
-            stack: [0; 16],
-            sp: 0,
-        };
-    }
-
-    pub fn push(&mut self, val: u16) {
-        if self.sp == self.stack.len() {
-            // Should theoretically be impossible with valid games
-            panic!("subroutine stackoverflow");
-        }
-        self.stack[self.sp] = val;
-        self.sp += 1;
-    }
-
-    pub fn pop(&mut self) -> u16 {
-        if self.sp == 0 {
-            panic!("subroutine stackunderflow");
-        }
-        self.sp -= 1;
-        self.stack[self.sp]
-    }
-}
-
 pub struct Crab8<'a> {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
@@ -344,6 +311,39 @@ impl Crab8<'_> {
             //Instruction::NotImplemented => {}
             _ => todo!(),
         }
+    }
+}
+
+struct SubroutineStack {
+    /// Most roms do not make use of more than 2 spots in the stack.
+    stack: [u16; 16],
+    /// Pointer in the stack
+    sp: usize,
+}
+
+impl SubroutineStack {
+    pub fn new() -> SubroutineStack {
+        return SubroutineStack {
+            stack: [0; 16],
+            sp: 0,
+        };
+    }
+
+    pub fn push(&mut self, val: u16) {
+        if self.sp == self.stack.len() {
+            // Should theoretically be impossible with valid games
+            panic!("subroutine stackoverflow");
+        }
+        self.stack[self.sp] = val;
+        self.sp += 1;
+    }
+
+    pub fn pop(&mut self) -> u16 {
+        if self.sp == 0 {
+            panic!("subroutine stackunderflow");
+        }
+        self.sp -= 1;
+        self.stack[self.sp]
     }
 }
 
