@@ -1,8 +1,12 @@
-#![allow(dead_code)]
 //! Spec of Crab8 largely written as described here
 //! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
+#![allow(dead_code)]
+mod display;
+
+use display::Display;
+use log::debug;
 use rand::{Rng, rng};
-use std::{cmp::Ordering, fs::File};
+use std::cmp::Ordering;
 
 struct SubroutineStack {
     /// Most roms do not make use of more than 2 spots in the stack.
@@ -48,7 +52,7 @@ pub struct Crab8 {
     /// The stack is for 16 bit addresses to get pushed to when working with subroutines.
     stack: SubroutineStack,
     /// 32 rows of 64
-    display: [[bool; 64]; 32],
+    display: Display,
 
     // Pointers
     // NOTE: Consider setting pointers to usize instead for ease of use.
@@ -99,7 +103,7 @@ impl Crab8 {
             ram,
             registers: [0; 16],
             stack: SubroutineStack::new(),
-            display: [[false; 64]; 32],
+            display: Display::new(),
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
@@ -127,8 +131,8 @@ impl Crab8 {
         }
     }
 
-    pub fn display(&self) -> [[bool; 64]; 32] {
-        return self.display;
+    pub fn display(&self) -> &Display {
+        return &self.display;
     }
 
     fn cycle(&mut self) {
@@ -142,20 +146,23 @@ impl Crab8 {
         self.pc += 2;
 
         // unneeded
-        println!("Cycles: {}", self.cycles);
+        debug!("Cycles: {}", self.cycles);
         self.cycles += 1;
     }
 
     fn execute_instruction(&mut self, ins: Instruction) {
+        debug!("Executing ins {:?}", ins);
         match ins {
             Instruction::ExecuteMachineLangaugeRoutine(_value) => {
                 todo!("do I want to log something on this branch? do I want to implement?")
             }
             Instruction::ClearScreen => {
-                self.display = [[false; 64]; 32];
+                self.display.clear_screen();
             }
             Instruction::Jump(loc) => {
                 self.pc = loc;
+                // Decrement PC to cancel out later increment
+                self.pc -= 2;
             }
             Instruction::CallSubroutine(loc) => {
                 self.stack.push(self.pc);
@@ -234,9 +241,9 @@ impl Crab8 {
             Instruction::Draw(vx, vy, n) => {
                 let (x, y) = (
                     // mod 64
-                    (self.registers[vx as usize] & 63) as usize,
+                    (self.registers[vx as usize] & 63),
                     // mod 32
-                    (self.registers[vy as usize] & 31) as usize,
+                    (self.registers[vy as usize] & 31),
                 );
                 // TODO: Improve (remove vec if possible)
                 let mut sprite: Vec<u8> = Vec::new();
@@ -244,24 +251,7 @@ impl Crab8 {
                     // get n bytes of the sprite
                     sprite.push(self.ram[(self.i + i as u16) as usize]);
                 }
-                for line in sprite {
-                    let rev_line: u8 = line.reverse_bits();
-                    for i in 0..8 {
-                        // if we're about to go off the screen, stop drawing row
-                        if x > self.display[y].len() {
-                            break;
-                        }
-                        // if curr bit in the sprite is on
-                        if (rev_line >> i) & 1 == 1 {
-                            // set flag if it turns off a bit
-                            if self.display[y][x + i] {
-                                self.registers[0xF] = 1;
-                            }
-                            // flip pixel on/off
-                            self.display[y][x + i] = !self.display[y][x + i];
-                        }
-                    }
-                }
+                self.display.draw((x, y), sprite);
             }
             Instruction::SkipIfPressed(_vx) => {
                 todo!("implement key press detection");
@@ -285,6 +275,7 @@ impl Crab8 {
             Instruction::GetKey(_vx) => {
                 todo!("implement key press detection");
             }
+            //Instruction::NotImplemented => {}
             _ => todo!(),
         }
     }

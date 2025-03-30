@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# TODO: Remove bevy and find something lighter weight. Using this for now because it seems the easiest to get off the ground
-bevy = "0.15.3"
+env_logger = "0.11.7"
+log = "0.4.27"
 rand = { version = "0.9.0", features = ["small_rng"] }
+termion = "4.0.4"
 
+# TODO: Consider if below optimizations are needed
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
 opt-level = 1
