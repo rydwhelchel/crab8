@@ -1,21 +1,22 @@
 //! Spec of Crab8 largely written as described here
 //! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 mod display;
 
-use crossterm::{
-    cursor::{Hide, SetCursorStyle, Show},
-    event::{Event, KeyCode, poll, read},
-    execute,
-    terminal::{
-        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
-    },
-};
 use display::Display;
 use log::debug;
 use rand::{Rng, rng};
-use std::{cmp::Ordering, io, time::Duration};
+use std::{
+    cmp::Ordering,
+    io::{Stdout, Write, stdin, stdout},
+};
+use termion::{
+    clear, cursor,
+    event::{Event, Key},
+    input::TermRead,
+    raw::{IntoRawMode, RawTerminal},
+    screen::{AlternateScreen, IntoAlternateScreen},
+};
 
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
@@ -80,11 +81,18 @@ impl Crab8 {
     pub fn new() -> Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
+
+        let screen = stdout()
+            .into_raw_mode()
+            .unwrap()
+            .into_alternate_screen()
+            .unwrap();
+
         return Crab8 {
             ram,
             registers: [0; 16],
             stack: SubroutineStack::new(),
-            display: Display::new(),
+            display: Display::new(screen),
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
@@ -108,42 +116,25 @@ impl Crab8 {
         // TODO: Should limit loop speed to ~700 cycles per second in order to avoid having too
         // high of an update speed.
 
-        enable_raw_mode().unwrap();
-        execute!(
-            io::stdout(),
-            EnterAlternateScreen,
-            Clear(ClearType::All),
-            Hide
-        )
-        .unwrap();
+        self.display.init_screen();
 
         loop {
-            // `poll()` waits for an `Event` for a given time period
-            if poll(Duration::from_millis(5)).unwrap() {
-                // It's guaranteed that the `read()` won't block when the `poll()`
-                // function returns `true`
-                match read().unwrap() {
-                    //Event::FocusGained => println!("FocusGained"),
-                    //Event::FocusLost => println!("FocusLost"),
-                    Event::Key(event) => {
-                        if event.code == KeyCode::Char('q') {
-                            Self::unwind();
-                            return;
-                        }
-                    }
-                    _ => {} //Event::Mouse(event) => println!("{:?}", event),
-                            //#[cfg(feature = "bracketed-paste")]
-                            //Event::Paste(data) => println!("Pasted {:?}", data),
-                            //Event::Resize(width, height) => println!("New size {}x{}", width, height),
+            for c in stdin().lock().events() {
+                let evt = c.unwrap();
+                match evt {
+                    Event::Key(key) => match key {
+                        Key::Char('q') => break,
+                        Key::Char('1') => {}
+                        Key::Char('2') => {}
+                        Key::Char('3') => {}
+                        _ => {}
+                    },
+                    _ => {}
                 }
-            } else {
-                self.cycle();
             }
+
+            self.cycle();
         }
-    }
-    fn unwind() {
-        execute!(io::stdout(), LeaveAlternateScreen, Show).unwrap();
-        disable_raw_mode().unwrap();
     }
 
     pub fn display(&self) -> &Display {
