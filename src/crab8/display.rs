@@ -1,3 +1,7 @@
+use std::io;
+
+use crossterm::{cursor, queue, style::Print};
+
 pub struct Display {
     raw: [[bool; 64]; 32],
 }
@@ -52,9 +56,9 @@ impl Display {
     //prob gonna try crossterm instead
     fn render(&mut self) {
         let mut i = 0;
-        let mut line = String::new();
         // render 2 lines at a time
         while i < self.raw.len() - 1 {
+            let mut line = String::new();
             for j in 0..self.raw[i].len() {
                 if self.raw[i][j] && self.raw[i + 1][j] {
                     line.push(Self::SOLID_BLOCK);
@@ -66,14 +70,9 @@ impl Display {
                     line.push(Self::EMPTY_BLOCK);
                 }
             }
-            line.push('\n');
+            queue!(io::stdout(), cursor::MoveTo(0, (i / 2) as u16), Print(line)).unwrap();
             i += 2;
         }
-        // {esc}[2J
-
-        print!("{}[2;1H", 27 as char);
-        println!("{}", line);
-        // idk what I'm doing :)
     }
 }
 
@@ -83,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_draw() {
-        let mut display: &mut Display = &mut Display::new();
+        let mut display: Display = Display::new();
         _ = display.draw((0, 0), vec![0xFF]);
 
         let mut expected_display: [[bool; 64]; 32] = [[false; 64]; 32];

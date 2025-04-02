@@ -3,10 +3,19 @@
 #![allow(dead_code)]
 mod display;
 
+use crossterm::{
+    cursor::{Hide, SetCursorStyle, Show},
+    event::{Event, KeyCode, poll, read},
+    execute,
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
+};
 use display::Display;
 use log::debug;
 use rand::{Rng, rng};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, io, time::Duration};
 
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
@@ -98,9 +107,43 @@ impl Crab8 {
     pub fn start(&mut self) {
         // TODO: Should limit loop speed to ~700 cycles per second in order to avoid having too
         // high of an update speed.
+
+        enable_raw_mode().unwrap();
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            Clear(ClearType::All),
+            Hide
+        )
+        .unwrap();
+
         loop {
-            self.cycle()
+            // `poll()` waits for an `Event` for a given time period
+            if poll(Duration::from_millis(5)).unwrap() {
+                // It's guaranteed that the `read()` won't block when the `poll()`
+                // function returns `true`
+                match read().unwrap() {
+                    //Event::FocusGained => println!("FocusGained"),
+                    //Event::FocusLost => println!("FocusLost"),
+                    Event::Key(event) => {
+                        if event.code == KeyCode::Char('q') {
+                            Self::unwind();
+                            return;
+                        }
+                    }
+                    _ => {} //Event::Mouse(event) => println!("{:?}", event),
+                            //#[cfg(feature = "bracketed-paste")]
+                            //Event::Paste(data) => println!("Pasted {:?}", data),
+                            //Event::Resize(width, height) => println!("New size {}x{}", width, height),
+                }
+            } else {
+                self.cycle();
+            }
         }
+    }
+    fn unwind() {
+        execute!(io::stdout(), LeaveAlternateScreen, Show).unwrap();
+        disable_raw_mode().unwrap();
     }
 
     pub fn display(&self) -> &Display {
