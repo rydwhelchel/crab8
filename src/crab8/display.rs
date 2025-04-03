@@ -56,7 +56,15 @@ impl Display {
     }
 
     pub fn init_screen(&mut self) {
-        write!(self.screen, "{}{}", clear::All, cursor::Goto(1, 1)).unwrap();
+        write!(
+            self.screen,
+            "{}{}{}{}",
+            clear::All,
+            cursor::Goto(1, 1),
+            cursor::Hide,
+            "Hello world!"
+        )
+        .unwrap();
     }
 
     // TODO: This should take the current raw state and output it to term
@@ -65,8 +73,6 @@ impl Display {
     //
     //prob gonna try crossterm instead
     fn render(&mut self) {
-        let mut stdout = stdout().into_raw_mode().unwrap();
-
         let mut i = 0;
         // render 2 lines at a time
         while i < self.raw.len() - 1 {
@@ -82,7 +88,7 @@ impl Display {
                     line.push(Self::EMPTY_BLOCK);
                 }
             }
-            write!(stdout, "ASDF").unwrap();
+            write!(self.screen, "ASDF").unwrap();
             i += 2;
         }
     }

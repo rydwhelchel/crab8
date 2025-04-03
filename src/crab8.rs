@@ -8,7 +8,7 @@ use log::debug;
 use rand::{Rng, rng};
 use std::{
     cmp::Ordering,
-    io::{Stdout, Write, stdin, stdout},
+    io::{Cursor, Stdout, Write, stdin, stdout},
 };
 use termion::{
     clear, cursor,
@@ -82,17 +82,27 @@ impl Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
 
-        let screen = stdout()
+        let mut screen = stdout()
             .into_raw_mode()
             .unwrap()
             .into_alternate_screen()
             .unwrap();
+        write!(
+            screen,
+            "{}{}{}",
+            clear::All,
+            cursor::Goto(1, 1),
+            "hello world"
+        )
+        .unwrap();
+        let mut display = Display::new(screen);
+        display.init_screen();
 
         return Crab8 {
             ram,
             registers: [0; 16],
             stack: SubroutineStack::new(),
-            display: Display::new(screen),
+            display,
             pc: Self::OFFSET,
             i: 0,
             delay_timer: 0,
