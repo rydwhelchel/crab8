@@ -6,18 +6,18 @@ use termion::{
     screen::{AlternateScreen, IntoAlternateScreen},
 };
 
-pub struct Display {
+pub struct Display<W: Write> {
     raw: [[bool; 64]; 32],
-    screen: AlternateScreen<RawTerminal<Stdout>>,
+    screen: W,
 }
 
-impl Display {
+impl<W: Write> Display<W> {
     const SOLID_BLOCK: char = '█';
     const LOWER_HALF_BLOCK: char = '▄';
     const UPPER_HALF_BLOCK: char = '▀';
     const EMPTY_BLOCK: char = ' ';
 
-    pub fn new(stdout: AlternateScreen<RawTerminal<Stdout>>) -> Display {
+    pub fn new(stdout: W) -> Display<W> {
         return Display {
             raw: [[false; 64]; 32],
             screen: stdout,
@@ -98,6 +98,7 @@ impl Display {
 mod tests {
     use std::io::stdout;
 
+    use std::io::Write;
     use termion::{raw::IntoRawMode, screen::IntoAlternateScreen};
 
     use super::Display;
@@ -110,7 +111,7 @@ mod tests {
             .into_alternate_screen()
             .unwrap();
 
-        let mut display: Display = Display::new(stdout);
+        let mut display: Display<_> = Display::new(stdout);
         _ = display.draw((0, 0), vec![0xFF]);
 
         let mut expected_display: [[bool; 64]; 32] = [[false; 64]; 32];

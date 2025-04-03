@@ -18,7 +18,7 @@ use termion::{
     screen::{AlternateScreen, IntoAlternateScreen},
 };
 
-pub struct Crab8 {
+pub struct Crab8<W: Write> {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
     ram: [u8; 4096],
@@ -29,7 +29,7 @@ pub struct Crab8 {
     /// The stack is for 16 bit addresses to get pushed to when working with subroutines.
     stack: SubroutineStack,
     /// 32 rows of 64
-    display: Display,
+    display: Display<W>,
 
     // Pointers
     // NOTE: Consider setting pointers to usize instead for ease of use.
@@ -49,7 +49,7 @@ pub struct Crab8 {
     cycles: usize,
 }
 
-impl Crab8 {
+impl<W: Write> Crab8<W> {
     /// PC starts at 0x200 (512) because chip8 used to store its
     /// own internal workings in the first 512 addresses.
     const OFFSET: u16 = 0x200;
@@ -78,7 +78,7 @@ impl Crab8 {
         (hex_val * 5).into()
     }
 
-    pub fn new() -> Crab8 {
+    pub fn new() -> Crab8<W> {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
 
@@ -86,7 +86,8 @@ impl Crab8 {
             .into_raw_mode()
             .unwrap()
             .into_alternate_screen()
-            .unwrap();
+            .unwrap()
+            .lock();
         write!(
             screen,
             "{}{}{}",
@@ -147,7 +148,7 @@ impl Crab8 {
         }
     }
 
-    pub fn display(&self) -> &Display {
+    pub fn display(&self) -> &Display<W> {
         return &self.display;
     }
 
