@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{Write, stdout};
 
 use crossterm::{cursor, queue, style::Print};
 
@@ -11,6 +11,8 @@ impl Display {
     const LOWER_HALF_BLOCK: char = '▄';
     const UPPER_HALF_BLOCK: char = '▀';
     const EMPTY_BLOCK: char = ' ';
+    // Left border of chip8
+    const LEFT_JUSTIFY: u16 = 10;
 
     pub fn new() -> Display {
         return Display {
@@ -49,11 +51,6 @@ impl Display {
         flipped
     }
 
-    // TODO: This should take the current raw state and output it to term
-    // prob using termion
-    // revisit w/ https://github.com/redox-os/games/blob/master/src/minesweeper/main.rs
-    //
-    //prob gonna try crossterm instead
     fn render(&mut self) {
         let mut i = 0;
         // render 2 lines at a time
@@ -61,18 +58,28 @@ impl Display {
             let mut line = String::new();
             for j in 0..self.raw[i].len() {
                 if self.raw[i][j] && self.raw[i + 1][j] {
+                    // If both top half and bottom half are filled
                     line.push(Self::SOLID_BLOCK);
                 } else if self.raw[i][j] && !self.raw[i + 1][j] {
+                    // just top half filled
                     line.push(Self::UPPER_HALF_BLOCK);
                 } else if !self.raw[i][j] && self.raw[i + 1][j] {
+                    // just bottom half filled
                     line.push(Self::LOWER_HALF_BLOCK);
                 } else if !self.raw[i][j] && !self.raw[i + 1][j] {
+                    // neither filled
                     line.push(Self::EMPTY_BLOCK);
                 }
             }
-            queue!(io::stdout(), cursor::MoveTo(0, (i / 2) as u16), Print(line)).unwrap();
+            queue!(
+                stdout(),
+                cursor::MoveTo(Self::LEFT_JUSTIFY, (i / 2) as u16),
+                Print(line)
+            )
+            .unwrap();
             i += 2;
         }
+        stdout().flush().unwrap();
     }
 }
 

@@ -4,9 +4,10 @@
 mod display;
 
 use crossterm::{
-    cursor::{Hide, SetCursorStyle, Show},
+    cursor::{self, Hide, Show},
     event::{Event, KeyCode, poll, read},
     execute,
+    style::Print,
     terminal::{
         Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
         enable_raw_mode,
@@ -15,7 +16,11 @@ use crossterm::{
 use display::Display;
 use log::debug;
 use rand::{Rng, rng};
-use std::{cmp::Ordering, io, time::Duration};
+use std::{
+    cmp::Ordering,
+    io::{self, stdout},
+    time::{Duration, Instant},
+};
 
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
@@ -31,9 +36,6 @@ pub struct Crab8 {
     display: Display,
 
     // Pointers
-    // NOTE: Consider setting pointers to usize instead for ease of use.
-    // Though pointers can only address 12 bits in chip8
-    /// program counter - points to current instruction in memory
     pc: u16,
     /// index - general use pointer
     i: u16,
@@ -80,6 +82,16 @@ impl Crab8 {
     pub fn new() -> Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
+
+        enable_raw_mode().unwrap();
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            Clear(ClearType::All),
+            Hide
+        )
+        .unwrap();
+
         return Crab8 {
             ram,
             registers: [0; 16],
@@ -105,39 +117,36 @@ impl Crab8 {
     }
 
     pub fn start(&mut self) {
-        // TODO: Should limit loop speed to ~700 cycles per second in order to avoid having too
-        // high of an update speed.
-
-        enable_raw_mode().unwrap();
-        execute!(
-            io::stdout(),
-            EnterAlternateScreen,
-            Clear(ClearType::All),
-            Hide
-        )
-        .unwrap();
+        let interval = Duration::from_secs(1);
+        let mut log_time = Instant::now() + interval;
 
         loop {
-            // `poll()` waits for an `Event` for a given time period
-            if poll(Duration::from_millis(5)).unwrap() {
-                // It's guaranteed that the `read()` won't block when the `poll()`
-                // function returns `true`
+            // results in around 700 cycles per second
+            if poll(Duration::from_micros(1_250)).unwrap() {
                 match read().unwrap() {
-                    //Event::FocusGained => println!("FocusGained"),
-                    //Event::FocusLost => println!("FocusLost"),
-                    Event::Key(event) => {
-                        if event.code == KeyCode::Char('q') {
+                    Event::Key(event) => match event.code {
+                        KeyCode::Char('q') => {
                             Self::unwind();
                             return;
                         }
-                    }
-                    _ => {} //Event::Mouse(event) => println!("{:?}", event),
-                            //#[cfg(feature = "bracketed-paste")]
-                            //Event::Paste(data) => println!("Pasted {:?}", data),
-                            //Event::Resize(width, height) => println!("New size {}x{}", width, height),
+                        _ => {}
+                    },
+                    _ => {}
                 }
-            } else {
-                self.cycle();
+            }
+            // Chip8 cycle
+            self.cycle();
+
+            // Cycles per second counter
+            if Instant::now() > log_time {
+                execute!(
+                    stdout(),
+                    cursor::MoveTo(10, 20),
+                    Print(format!("Cycles: {} per second", self.cycles))
+                )
+                .unwrap();
+                self.cycles = 0;
+                log_time = Instant::now() + interval;
             }
         }
     }
