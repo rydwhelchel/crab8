@@ -1,3 +1,4 @@
 # Sometimes I debug
 **/.idea
 /target
+.DS_Store

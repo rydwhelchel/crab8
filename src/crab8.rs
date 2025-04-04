@@ -1,11 +1,10 @@
 //! Spec of Crab8 largely written as described here
 //! https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
-#![allow(dead_code)]
 mod display;
 
 use crossterm::{
     cursor::{self, Hide, Show},
-    event::{Event, KeyCode, poll, read},
+    event::{Event, KeyCode, KeyEventKind, poll, read},
     execute,
     style::Print,
     terminal::{
@@ -19,6 +18,7 @@ use rand::{Rng, rng};
 use std::{
     cmp::Ordering,
     io::{self, stdout},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -48,6 +48,8 @@ pub struct Crab8 {
 
     // Not part of the original crab8, just have it for debug purposes
     cycles: usize,
+
+    pressed_key: KeyCode,
 }
 
 impl Crab8 {
@@ -102,37 +104,44 @@ impl Crab8 {
             delay_timer: 0,
             sound_timer: 0,
             cycles: 0,
+            pressed_key: KeyCode::Null,
         };
     }
 
-    pub fn load_rom(&mut self, name: &str) {
-        let rom_contents = match std::fs::read("./roms/".to_string() + name) {
-            Ok(contents) => contents,
-            Err(error) => panic!("{}", error),
-        };
-
-        for i in 0..rom_contents.len() {
-            self.ram[Self::OFFSET as usize + i] = rom_contents[i];
+    pub fn load_rom(&mut self, rom: Arc<[u8]>) {
+        for i in 0..rom.len() {
+            self.ram[Self::OFFSET as usize + i] = rom[i];
         }
     }
 
     pub fn start(&mut self) {
         let interval = Duration::from_secs(1);
         let mut log_time = Instant::now() + interval;
+        let mut clear_key_time: Instant = Instant::now();
 
         loop {
             // results in around 700 cycles per second
-            if poll(Duration::from_micros(1_250)).unwrap() {
+            if poll(Duration::from_micros(1_225)).unwrap() {
                 match read().unwrap() {
                     Event::Key(event) => match event.code {
                         KeyCode::Char('q') => {
                             Self::unwind();
                             return;
                         }
-                        _ => {}
+                        _ => {
+                            if event.kind == KeyEventKind::Release {
+                                self.pressed_key = KeyCode::Null;
+                            } else {
+                                // Makes it so we don't constantly clear key while holding down key
+                                clear_key_time = Instant::now() + Duration::from_millis(75);
+                                self.pressed_key = event.code;
+                            }
+                        }
                     },
                     _ => {}
                 }
+            } else if Instant::now() > clear_key_time {
+                self.pressed_key = KeyCode::Null;
             }
             // Chip8 cycle
             self.cycle();
@@ -148,15 +157,18 @@ impl Crab8 {
                 self.cycles = 0;
                 log_time = Instant::now() + interval;
             }
+            execute!(
+                stdout(),
+                cursor::MoveTo(10, 21),
+                Clear(ClearType::CurrentLine),
+                Print(format!("Key Pressed: {}", self.pressed_key))
+            )
+            .unwrap();
         }
     }
     fn unwind() {
         execute!(io::stdout(), LeaveAlternateScreen, Show).unwrap();
         disable_raw_mode().unwrap();
-    }
-
-    pub fn display(&self) -> &Display {
-        return &self.display;
     }
 
     fn cycle(&mut self) {

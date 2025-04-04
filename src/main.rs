@@ -1,7 +1,11 @@
-#![allow(dead_code)]
 mod crab8;
 
+use std::sync::Arc;
+
 use crab8::Crab8;
+use include_dir::{Dir, include_dir};
+
+static PROJECT_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/roms");
 
 fn main() {
     start_crab8();
@@ -9,6 +13,13 @@ fn main() {
 
 fn start_crab8() {
     let mut c8 = Crab8::new();
-    c8.load_rom("Chip8 Logo.ch8");
+
+    let c8_logo: Arc<[u8]> = PROJECT_DIR
+        .get_file("Chip8 Logo.ch8")
+        .unwrap()
+        .contents()
+        .into();
+
+    c8.load_rom(c8_logo);
     c8.start();
 }
