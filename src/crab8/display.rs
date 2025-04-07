@@ -11,13 +11,66 @@ impl Display {
     const LOWER_HALF_BLOCK: char = '▄';
     const UPPER_HALF_BLOCK: char = '▀';
     const EMPTY_BLOCK: char = ' ';
+    const HORIZONTAL_LINE: char = '─';
+    const VERTICAL_LINE: char = '│';
+    const TOP_LEFT_CORNER: char = '┌';
+    const TOP_RIGHT_CORNER: char = '┐';
+    const BOTTOM_LEFT_CORNER: char = '└';
+    const BOTTOM_RIGHT_CORNER: char = '┘';
     // Left border of chip8
-    const LEFT_JUSTIFY: u16 = 10;
+    const TOP_BORDER: u16 = 2;
+    const LEFT_BORDER: u16 = 10;
+    const RIGHT_BORDER: u16 = Self::LEFT_BORDER + 64;
 
     pub fn new() -> Display {
+        Self::render_border();
         return Display {
             raw: [[false; 64]; 32],
         };
+    }
+
+    fn render_border() {
+        // Draw top row
+        let mut line: Vec<char> = vec![Self::TOP_LEFT_CORNER];
+        for _ in 0..64 {
+            line.push(Self::HORIZONTAL_LINE);
+        }
+        line.push(Self::TOP_RIGHT_CORNER);
+        let line: String = line.into_iter().collect();
+
+        queue!(
+            stdout(),
+            cursor::MoveTo(Self::LEFT_BORDER - 1, Self::TOP_BORDER - 1),
+            Print(line),
+        )
+        .unwrap();
+
+        // Draw sides
+        for i in 0..16 {
+            queue!(
+                stdout(),
+                cursor::MoveTo(Self::LEFT_BORDER - 1, Self::TOP_BORDER + i),
+                Print(Self::VERTICAL_LINE),
+                cursor::MoveTo(Self::RIGHT_BORDER, Self::TOP_BORDER + i),
+                Print(Self::VERTICAL_LINE)
+            )
+            .unwrap();
+        }
+
+        // Draw bottom row
+        let mut line: Vec<char> = vec![Self::BOTTOM_LEFT_CORNER];
+        for _ in 0..64 {
+            line.push(Self::HORIZONTAL_LINE);
+        }
+        line.push(Self::BOTTOM_RIGHT_CORNER);
+        let line: String = line.into_iter().collect();
+
+        queue!(
+            stdout(),
+            cursor::MoveTo(Self::LEFT_BORDER - 1, Self::TOP_BORDER + 16),
+            Print(line),
+        )
+        .unwrap();
     }
 
     pub fn clear_screen(&mut self) {
@@ -73,7 +126,7 @@ impl Display {
             }
             queue!(
                 stdout(),
-                cursor::MoveTo(Self::LEFT_JUSTIFY, (i / 2) as u16),
+                cursor::MoveTo(Self::LEFT_BORDER, Self::TOP_BORDER + (i / 2) as u16),
                 Print(line)
             )
             .unwrap();
