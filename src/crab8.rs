@@ -124,7 +124,7 @@ impl Crab8 {
             if poll(Duration::from_micros(1_225)).unwrap() {
                 match read().unwrap() {
                     Event::Key(event) => match event.code {
-                        KeyCode::Char('q') => {
+                        KeyCode::Char('Q') => {
                             Self::unwind();
                             return;
                         }
@@ -333,8 +333,16 @@ impl Crab8 {
                 self.i = new_val;
                 self.registers[0xF] = overflowed.into();
             }
-            Instruction::GetKey(_vx) => {
-                todo!("implement key press detection");
+            Instruction::GetKey(vx) => {
+                let KeyCode::Char(pressed_key) = self.pressed_key else {
+                    self.pc -= 2;
+                    return;
+                };
+                let Some(input) = InputKey::get_input_key(pressed_key) else {
+                    self.pc -= 2;
+                    return;
+                };
+                self.registers[vx as usize] = input.into();
             }
             Instruction::FontCharacter(vx) => {
                 self.i = Self::get_font_addr(self.registers[vx as usize]);
@@ -368,6 +376,100 @@ impl Crab8 {
             }
             //Instruction::NotImplemented => {}
             _ => todo!(),
+        }
+    }
+}
+
+/// Corresponds to the COSMAC VIP keypad
+/// 1 2 3 C
+/// 4 5 6 D
+/// 7 8 9 E
+/// A 0 B F
+enum InputKey {
+    // TODO: Is there a better name for these?
+    One,
+    Two,
+    Three,
+    C,
+    Four,
+    Five,
+    Six,
+    D,
+    Seven,
+    Eight,
+    Nine,
+    E,
+    A,
+    Zero,
+    B,
+    F,
+}
+
+// The clumsiest impl ever
+impl InputKey {
+    fn get_input_key(value: char) -> Option<Self> {
+        match value {
+            '1' => Some(InputKey::One),
+            '2' => Some(InputKey::Two),
+            '3' => Some(InputKey::Three),
+            '4' => Some(InputKey::C),
+            'q' => Some(InputKey::Four),
+            'w' => Some(InputKey::Five),
+            'e' => Some(InputKey::Six),
+            'r' => Some(InputKey::D),
+            'a' => Some(InputKey::Seven),
+            's' => Some(InputKey::Eight),
+            'd' => Some(InputKey::Nine),
+            'f' => Some(InputKey::E),
+            'z' => Some(InputKey::A),
+            'x' => Some(InputKey::Zero),
+            'c' => Some(InputKey::B),
+            'v' => Some(InputKey::F),
+            _ => None,
+        }
+    }
+
+    fn equals(self: Self, value_from_register: u8) -> bool {
+        match self {
+            InputKey::Zero => 0 == value_from_register,
+            InputKey::One => 1 == value_from_register,
+            InputKey::Two => 2 == value_from_register,
+            InputKey::Three => 3 == value_from_register,
+            InputKey::Four => 4 == value_from_register,
+            InputKey::Five => 5 == value_from_register,
+            InputKey::Six => 6 == value_from_register,
+            InputKey::Seven => 7 == value_from_register,
+            InputKey::Eight => 8 == value_from_register,
+            InputKey::Nine => 9 == value_from_register,
+            InputKey::A => 10 == value_from_register,
+            InputKey::B => 11 == value_from_register,
+            InputKey::C => 12 == value_from_register,
+            InputKey::D => 13 == value_from_register,
+            InputKey::E => 14 == value_from_register,
+            InputKey::F => 15 == value_from_register,
+        }
+    }
+}
+
+impl From<InputKey> for u8 {
+    fn from(value: InputKey) -> Self {
+        match value {
+            InputKey::Zero => 0,
+            InputKey::One => 1,
+            InputKey::Two => 2,
+            InputKey::Three => 3,
+            InputKey::Four => 4,
+            InputKey::Five => 5,
+            InputKey::Six => 6,
+            InputKey::Seven => 7,
+            InputKey::Eight => 8,
+            InputKey::Nine => 9,
+            InputKey::A => 10,
+            InputKey::B => 11,
+            InputKey::C => 12,
+            InputKey::D => 13,
+            InputKey::E => 14,
+            InputKey::F => 15,
         }
     }
 }
@@ -643,7 +745,7 @@ enum Instruction {
     /// (X, Y, N) DXYN, Draw sprite of height N located at i to coords (VX, VY)
     Draw(u8, u8, u8),
 
-    /// (X) EX8E, Skip if KEY in VX is pressed
+    /// (X) EX9E, Skip if KEY in VX is pressed
     SkipIfPressed(u8),
 
     /// (X) EXA1, Skip if KEY in VX is NOT pressed

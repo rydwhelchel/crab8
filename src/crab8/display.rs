@@ -19,11 +19,13 @@ impl Display {
     const BOTTOM_RIGHT_CORNER: char = '┘';
     // Left border of chip8
     const TOP_BORDER: u16 = 2;
+    const BOTTOM_BORDER: u16 = Self::TOP_BORDER + 16;
     const LEFT_BORDER: u16 = 10;
     const RIGHT_BORDER: u16 = Self::LEFT_BORDER + 64;
 
     pub fn new() -> Display {
         Self::render_border();
+        Self::render_help_text();
         return Display {
             raw: [[false; 64]; 32],
         };
@@ -67,7 +69,18 @@ impl Display {
 
         queue!(
             stdout(),
-            cursor::MoveTo(Self::LEFT_BORDER - 1, Self::TOP_BORDER + 16),
+            cursor::MoveTo(Self::LEFT_BORDER - 1, Self::BOTTOM_BORDER),
+            Print(line),
+        )
+        .unwrap();
+    }
+
+    fn render_help_text() {
+        let line = "Press 'Shift+Q' to quit.";
+
+        queue!(
+            stdout(),
+            cursor::MoveTo(Self::LEFT_BORDER, Self::BOTTOM_BORDER + 1),
             Print(line),
         )
         .unwrap();
