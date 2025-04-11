@@ -45,6 +45,7 @@ pub struct Crab8 {
     delay_timer: u8,
     /// Ticks down 60 times per second, beeps all the while
     sound_timer: u8,
+    next_tick: Instant,
 
     // Not part of the original crab8, just have it for debug purposes
     cycles: usize,
@@ -76,6 +77,8 @@ impl Crab8 {
         0xF0, 0x80, 0xF0, 0x80, 0x80, // F
     ];
 
+    const TIMER_TICK: Duration = Duration::from_secs(1 / 60);
+
     fn get_font_addr(val: u8) -> u16 {
         let hex_val = val % 16;
         (hex_val * 5).into()
@@ -103,6 +106,7 @@ impl Crab8 {
             i: 0,
             delay_timer: 0,
             sound_timer: 0,
+            next_tick: Instant::now(),
             cycles: 0,
             pressed_key: KeyCode::Null,
         };
@@ -146,7 +150,7 @@ impl Crab8 {
             // Chip8 cycle
             self.cycle();
 
-            // Cycles per second counter
+            // DEBUG: Cycles per second counter
             if Instant::now() > log_time {
                 execute!(
                     stdout(),
@@ -157,6 +161,7 @@ impl Crab8 {
                 self.cycles = 0;
                 log_time = Instant::now() + interval;
             }
+            // DEBUG: Showing which key is currently pressed
             execute!(
                 stdout(),
                 cursor::MoveTo(10, 21),
@@ -166,6 +171,7 @@ impl Crab8 {
             .unwrap();
         }
     }
+
     fn unwind() {
         execute!(io::stdout(), LeaveAlternateScreen, Show).unwrap();
         disable_raw_mode().unwrap();
@@ -179,11 +185,24 @@ impl Crab8 {
             self.ram[self.pc as usize],
             self.ram[self.pc as usize + 1],
         )));
+        self.timer_tick();
         self.pc += 2;
 
-        // unneeded
+        // Counting cycles for debug purposes
         debug!("Cycles: {}", self.cycles);
         self.cycles += 1;
+    }
+
+    fn timer_tick(&mut self) {
+        let now = Instant::now();
+        if self.delay_timer > 0 && now > self.next_tick {
+            self.delay_timer -= 1;
+        }
+        if self.sound_timer > 0 && now > self.next_tick {
+            self.sound_timer -= 1;
+        }
+
+        self.next_tick = now + Self::TIMER_TICK;
     }
 
     fn execute_instruction(&mut self, ins: Instruction) {
@@ -308,13 +327,28 @@ impl Crab8 {
                     // get n bytes of the sprite
                     sprite.push(self.ram[(self.i + i as u16) as usize]);
                 }
-                self.display.draw((x, y), sprite);
+                self.registers[0xF] = self.display.draw((x, y), sprite) as u8;
             }
-            Instruction::SkipIfPressed(_vx) => {
-                todo!("implement key press detection");
+            Instruction::SkipIfPressed(vx) => {
+                let KeyCode::Char(pressed_key) = self.pressed_key else {
+                    return;
+                };
+                let Some(input) = InputKey::get_input_key(pressed_key) else {
+                    return;
+                };
+                if self.registers[vx as usize] == input.into() {
+                    self.pc += 2;
+                }
             }
-            Instruction::SkipIfNotPressed(_vx) => {
-                todo!("implement key press detection");
+            Instruction::SkipIfNotPressed(vx) => {
+                if let KeyCode::Char(pressed_key) = self.pressed_key {
+                    if let Some(input) = InputKey::get_input_key(pressed_key) {
+                        if self.registers[vx as usize] == input.into() {
+                            return;
+                        }
+                    }
+                }
+                self.pc += 2;
             }
             Instruction::GetDelayTimer(vx) => {
                 self.registers[vx as usize] = self.delay_timer;
@@ -374,8 +408,9 @@ impl Crab8 {
                     self.registers[(vx + i) as usize] = self.ram[(self.i + i as u16) as usize]
                 }
             }
-            //Instruction::NotImplemented => {}
-            _ => todo!(),
+            _ => {
+                panic!("Got NotImplemented");
+            }
         }
     }
 }
@@ -426,27 +461,6 @@ impl InputKey {
             'c' => Some(InputKey::B),
             'v' => Some(InputKey::F),
             _ => None,
-        }
-    }
-
-    fn equals(self: Self, value_from_register: u8) -> bool {
-        match self {
-            InputKey::Zero => 0 == value_from_register,
-            InputKey::One => 1 == value_from_register,
-            InputKey::Two => 2 == value_from_register,
-            InputKey::Three => 3 == value_from_register,
-            InputKey::Four => 4 == value_from_register,
-            InputKey::Five => 5 == value_from_register,
-            InputKey::Six => 6 == value_from_register,
-            InputKey::Seven => 7 == value_from_register,
-            InputKey::Eight => 8 == value_from_register,
-            InputKey::Nine => 9 == value_from_register,
-            InputKey::A => 10 == value_from_register,
-            InputKey::B => 11 == value_from_register,
-            InputKey::C => 12 == value_from_register,
-            InputKey::D => 13 == value_from_register,
-            InputKey::E => 14 == value_from_register,
-            InputKey::F => 15 == value_from_register,
         }
     }
 }
@@ -520,9 +534,11 @@ fn compare_ins_remainder(ins: &str, comp: String) -> bool {
     return false;
 }
 
+// TODO: Make this return a result and error in NotImplmented cases to capture more info
 fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     let instruction: String = format!("{:04x}", combine_bytes(bytes));
 
+    println!("Parsing instruction {:?}", instruction);
     // Unwrapping directly because above format string should always have 4 characters
     match instruction.chars().nth(0).unwrap() {
         '0' => {

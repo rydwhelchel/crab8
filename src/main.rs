@@ -15,15 +15,15 @@ fn start_crab8() {
     let mut c8 = Crab8::new();
 
     let c8_logo: Arc<[u8]> = PROJECT_DIR
-        // NOTE: Needs input detection
+        // NOTE: Almost working... kind of
         //.get_file("Space Invaders [David Winter].ch8")
         // NOTE: Not implemented
         //.get_file("jason.ch8")
         // NOTE: Doesn't work properly idk why
         //.get_file("Chip8 emulator Logo [Garstyciuks].ch8")
         // NOTE: Needs input detection
-        //.get_file("Random Number Test [Matthew Mikolay, 2010].ch8")
-        .get_file("Chip8 Logo.ch8")
+        .get_file("Random Number Test [Matthew Mikolay, 2010].ch8")
+        //.get_file("Chip8 Logo.ch8")
         .unwrap()
         .contents()
         .into();

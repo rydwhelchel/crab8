@@ -99,7 +99,7 @@ impl Display {
             let rev_line: u8 = sprite[sprite_y].reverse_bits();
             for i in 0..8 {
                 // if we're about to go off the screen, stop drawing row
-                if x > self.raw[y].len() {
+                if x + i >= self.raw[y].len() {
                     break;
                 }
                 // if curr bit in the sprite is on
@@ -156,6 +156,7 @@ mod tests {
     #[test]
     fn test_draw() {
         let mut display: Display = Display::new();
+        // TODO: Fix testing draw so it doesn't render when you run test
         _ = display.draw((0, 0), vec![0xFF]);
 
         let mut expected_display: [[bool; 64]; 32] = [[false; 64]; 32];
@@ -172,5 +173,17 @@ mod tests {
         }
 
         assert_eq!(expected_display, display.raw);
+    }
+
+    #[test]
+    fn test_bit_check() {
+        assert!((1 >> 1) & 1 != 1);
+        assert!((2 >> 1) & 1 == 1);
+        assert!((3 >> 1) & 1 == 1);
+        assert!((7 >> 1) & 1 == 1);
+        assert!((7 >> 2) & 1 == 1);
+        assert!((7 >> 3) & 1 != 1);
+        assert!((4 >> 2) & 1 == 1);
+        assert!((5 >> 2) & 1 == 1);
     }
 }
