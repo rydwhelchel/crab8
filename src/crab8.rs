@@ -22,6 +22,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub struct Config {
+    pub old_shift: bool,
+    pub old_jump_with_register_offset: bool,
+    pub old_memory: bool,
+}
+
 pub struct Crab8 {
     /// Read&write RAM. Chip8 games modify themselves in memory frequently
     /// Fonts are stored at index 0
@@ -51,6 +57,9 @@ pub struct Crab8 {
     cycles: usize,
 
     pressed_key: KeyCode,
+
+    // Contains toggles for the different behaviors which chip-8 can use
+    config: Config,
 }
 
 impl Crab8 {
@@ -84,7 +93,7 @@ impl Crab8 {
         (hex_val * 5).into()
     }
 
-    pub fn new() -> Crab8 {
+    pub fn new(config: Config) -> Crab8 {
         let mut ram = [0; 4096];
         ram[0..80].copy_from_slice(&Self::FONTS);
 
@@ -109,6 +118,7 @@ impl Crab8 {
             next_tick: Instant::now(),
             cycles: 0,
             pressed_key: KeyCode::Null,
+            config,
         };
     }
 
@@ -150,7 +160,6 @@ impl Crab8 {
             // Chip8 cycle
             self.cycle();
 
-            // DEBUG: Cycles per second counter
             if Instant::now() > log_time {
                 execute!(
                     stdout(),
@@ -161,7 +170,8 @@ impl Crab8 {
                 self.cycles = 0;
                 log_time = Instant::now() + interval;
             }
-            // DEBUG: Showing which key is currently pressed
+            // Would be nice to show a full pad with every key you can press and which
+            // is currently pressed
             execute!(
                 stdout(),
                 cursor::MoveTo(10, 21),
@@ -181,10 +191,10 @@ impl Crab8 {
         if self.pc as usize >= self.ram.len() {
             panic!("pc reached out of bounds on RAM")
         }
-        self.execute_instruction(parse_instruction((
-            self.ram[self.pc as usize],
-            self.ram[self.pc as usize + 1],
-        )));
+        self.execute_instruction(
+            parse_instruction((self.ram[self.pc as usize], self.ram[self.pc as usize + 1]))
+                .unwrap(),
+        );
         self.timer_tick();
         self.pc += 2;
 
@@ -205,6 +215,8 @@ impl Crab8 {
         self.next_tick = now + Self::TIMER_TICK;
     }
 
+    // TODO: Add something that counts each instruction that is executed
+    // on quit, print that something
     fn execute_instruction(&mut self, ins: Instruction) {
         debug!("Executing ins {:?}", ins);
         match ins {
@@ -288,17 +300,23 @@ impl Crab8 {
                 // flag is set to 1 if an overflow does NOT occur
                 self.registers[0xF] = (!overflowed).into();
             }
-            // FIXME: Using the simple implementation for now, come back later and add configurable
-            // behavior - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/#8xy6-and-8xye-shift
-            // early 90s, vy started getting completely ignored
-            Instruction::ShiftRight(vx, _vy) => {
+            Instruction::ShiftRight(vx, vy) => {
+                // NOTE: If we have enabled old shift behavior, set vx to vy first
+                if self.config.old_shift {
+                    self.registers[vx as usize] = self.registers[vy as usize];
+                }
+
                 // Capture the right bit before it gets shifted out
                 let shifted_out = self.registers[vx as usize] & 0b00000001;
                 self.registers[vx as usize] = self.registers[vx as usize] >> 1;
                 self.registers[0xF] = shifted_out;
             }
-            // FIXME:
-            Instruction::ShiftLeft(vx, _vy) => {
+            Instruction::ShiftLeft(vx, vy) => {
+                // NOTE: If we have enabled old shift behavior, set vx to vy first
+                if self.config.old_shift {
+                    self.registers[vx as usize] = self.registers[vy as usize];
+                }
+
                 // Capture the right bit before it gets shifted out
                 let shifted_out = self.registers[vx as usize] & 0b10000000;
                 self.registers[vx as usize] = self.registers[vx as usize] << 1;
@@ -307,10 +325,12 @@ impl Crab8 {
             Instruction::SetIndex(value) => {
                 self.i = value;
             }
-            // FIXME: Add config COSMAC VIP uses BNNN, goes to address NNN + V0
-            // We're using the newer implementation BXNN, XNN + VX
             Instruction::JumpWithRegisterOffset(vx, value) => {
-                self.pc = self.registers[vx as usize] as u16 + value;
+                if self.config.old_jump_with_register_offset {
+                    self.pc = self.registers[0] as u16 + value;
+                } else {
+                    self.pc = self.registers[vx as usize] as u16 + value;
+                }
             }
             Instruction::Random(vx, value) => {
                 let ran_value: u8 = rng().random();
@@ -396,20 +416,31 @@ impl Crab8 {
                 self.ram[(self.i + 1) as usize] = tens;
                 self.ram[(self.i + 2) as usize] = ones;
             }
-            // FIXME: Add config for older behavior, though it is supposedly not very common
             Instruction::StoreMemory(vx) => {
-                for i in 0..vx {
-                    self.ram[(self.i + i as u16) as usize] = self.registers[(vx + i) as usize];
+                if self.config.old_memory {
+                    for i in 0..vx {
+                        self.i += 1;
+                        self.ram[self.i as usize] = self.registers[i as usize];
+                    }
+                    self.i += 1;
+                } else {
+                    for i in 0..vx {
+                        self.ram[(self.i + i as u16) as usize] = self.registers[i as usize];
+                    }
                 }
             }
-            // FIXME: Add config for older behavior, though it is supposedly not very common
             Instruction::LoadMemory(vx) => {
-                for i in 0..vx {
-                    self.registers[(vx + i) as usize] = self.ram[(self.i + i as u16) as usize]
+                if self.config.old_memory {
+                    for i in 0..vx {
+                        self.i += 1;
+                        self.registers[i as usize] = self.ram[self.i as usize]
+                    }
+                    self.i += 1;
+                } else {
+                    for i in 0..vx {
+                        self.registers[i as usize] = self.ram[(self.i + i as u16) as usize]
+                    }
                 }
-            }
-            _ => {
-                panic!("Got NotImplemented");
             }
         }
     }
@@ -534,8 +565,13 @@ fn compare_ins_remainder(ins: &str, comp: String) -> bool {
     return false;
 }
 
+#[derive(Debug)]
+enum InstructionError {
+    NotImplemented,
+}
+
 // TODO: Make this return a result and error in NotImplmented cases to capture more info
-fn parse_instruction(bytes: (u8, u8)) -> Instruction {
+fn parse_instruction(bytes: (u8, u8)) -> Result<Instruction, InstructionError> {
     let instruction: String = format!("{:04x}", combine_bytes(bytes));
 
     println!("Parsing instruction {:?}", instruction);
@@ -543,146 +579,174 @@ fn parse_instruction(bytes: (u8, u8)) -> Instruction {
     match instruction.chars().nth(0).unwrap() {
         '0' => {
             if compare_ins_remainder(&instruction, String::from("0e0")) {
-                Instruction::ClearScreen
+                Ok(Instruction::ClearScreen)
             } else if compare_ins_remainder(&instruction, String::from("0ee")) {
-                Instruction::ReturnSubroutine
+                Ok(Instruction::ReturnSubroutine)
             } else {
-                Instruction::NotImplemented
+                Err(InstructionError::NotImplemented)
             }
         }
         '1' => {
             // TODO: Handle unwrap
-            Instruction::Jump(u16::from_str_radix(&instruction[1..4], 16).unwrap())
+            Ok(Instruction::Jump(
+                u16::from_str_radix(&instruction[1..4], 16).unwrap(),
+            ))
         }
         '2' => {
             // TODO: Handle unwrap
-            Instruction::CallSubroutine(u16::from_str_radix(&instruction[1..4], 16).unwrap())
+            Ok(Instruction::CallSubroutine(
+                u16::from_str_radix(&instruction[1..4], 16).unwrap(),
+            ))
         }
-        '3' => Instruction::ValueEqualitySkip(
+        '3' => Ok(Instruction::ValueEqualitySkip(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
-        ),
-        '4' => Instruction::ValueInequalitySkip(
+        )),
+        '4' => Ok(Instruction::ValueInequalitySkip(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
-        ),
+        )),
         '5' => {
             if instruction.chars().nth(3) == Some('0') {
-                Instruction::RegisterEqualitySkip(
+                Ok(Instruction::RegisterEqualitySkip(
                     u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                     u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-                )
+                ))
             } else {
-                Instruction::NotImplemented
+                Err(InstructionError::NotImplemented)
             }
         }
-        '6' => Instruction::SetRegisterToValue(
+        '6' => Ok(Instruction::SetRegisterToValue(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
-        ),
-        '7' => Instruction::AddToRegisterNoFlag(
+        )),
+        '7' => Ok(Instruction::AddToRegisterNoFlag(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
-        ),
+        )),
         '8' => match instruction.chars().nth(3).unwrap() {
-            '0' => Instruction::SetRegisterToRegister(
+            '0' => Ok(Instruction::SetRegisterToRegister(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '1' => Instruction::OrRegister(
+            )),
+            '1' => Ok(Instruction::OrRegister(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '2' => Instruction::AndRegister(
+            )),
+            '2' => Ok(Instruction::AndRegister(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '3' => Instruction::XorRegister(
+            )),
+            '3' => Ok(Instruction::XorRegister(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '4' => Instruction::AddRegisterToRegisterWithFlag(
+            )),
+            '4' => Ok(Instruction::AddRegisterToRegisterWithFlag(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '5' => Instruction::SubtractXYRegisterWithFlag(
+            )),
+            '5' => Ok(Instruction::SubtractXYRegisterWithFlag(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '6' => Instruction::ShiftRight(
+            )),
+            '6' => Ok(Instruction::ShiftRight(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            '7' => Instruction::SubtractYXRegisterWithFlag(
+            )),
+            '7' => Ok(Instruction::SubtractYXRegisterWithFlag(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            'e' => Instruction::ShiftLeft(
+            )),
+            'e' => Ok(Instruction::ShiftLeft(
                 u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                 u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-            ),
-            _ => Instruction::NotImplemented,
+            )),
+            _ => Err(InstructionError::NotImplemented),
         },
         '9' => {
             if instruction.chars().nth(3) == Some('0') {
-                Instruction::RegisterInequalitySkip(
+                Ok(Instruction::RegisterInequalitySkip(
                     u8::from_str_radix(&instruction[1..2], 16).unwrap(),
                     u8::from_str_radix(&instruction[2..3], 16).unwrap(),
-                )
+                ))
             } else {
-                Instruction::NotImplemented
+                Err(InstructionError::NotImplemented)
             }
         }
-        'a' => Instruction::SetIndex(u16::from_str_radix(&instruction[1..4], 16).unwrap()),
-        'b' => Instruction::JumpWithRegisterOffset(
+        'a' => Ok(Instruction::SetIndex(
+            u16::from_str_radix(&instruction[1..4], 16).unwrap(),
+        )),
+        'b' => Ok(Instruction::JumpWithRegisterOffset(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             // NOTE: This double parses the second value INTENTIONALLY. Weird instruction
             u16::from_str_radix(&instruction[1..4], 16).unwrap(),
-        ),
-        'c' => Instruction::Random(
+        )),
+        'c' => Ok(Instruction::Random(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..4], 16).unwrap(),
-        ),
-        'd' => Instruction::Draw(
+        )),
+        'd' => Ok(Instruction::Draw(
             u8::from_str_radix(&instruction[1..2], 16).unwrap(),
             u8::from_str_radix(&instruction[2..3], 16).unwrap(),
             u8::from_str_radix(&instruction[3..4], 16).unwrap(),
-        ),
+        )),
         'e' => {
             if compare_ins_remainder(&instruction, String::from("9e")) {
-                Instruction::SkipIfPressed(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::SkipIfPressed(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("a1")) {
-                Instruction::SkipIfNotPressed(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::SkipIfNotPressed(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else {
-                Instruction::NotImplemented
+                Err(InstructionError::NotImplemented)
             }
         }
         'f' => {
             // TODO: Convert to inner switch
             if compare_ins_remainder(&instruction, String::from("07")) {
-                Instruction::GetDelayTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::GetDelayTimer(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("15")) {
-                Instruction::SetDelayTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::SetDelayTimer(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("18")) {
-                Instruction::SetSoundTimer(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::SetSoundTimer(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("1e")) {
-                Instruction::AddToIndex(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::AddToIndex(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("0a")) {
-                Instruction::GetKey(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::GetKey(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("29")) {
-                Instruction::FontCharacter(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::FontCharacter(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("33")) {
-                Instruction::DecimalConversion(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::DecimalConversion(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("55")) {
-                Instruction::StoreMemory(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::StoreMemory(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else if compare_ins_remainder(&instruction, String::from("65")) {
-                Instruction::LoadMemory(u8::from_str_radix(&instruction[1..2], 16).unwrap())
+                Ok(Instruction::LoadMemory(
+                    u8::from_str_radix(&instruction[1..2], 16).unwrap(),
+                ))
             } else {
-                Instruction::NotImplemented
+                Err(InstructionError::NotImplemented)
             }
         }
 
-        _ => Instruction::NotImplemented,
+        _ => Err(InstructionError::NotImplemented),
     }
 }
 
@@ -793,9 +857,6 @@ enum Instruction {
 
     /// (X) FX65, V0..VX are loaded from i..i+X. i isn't touched except for older games
     LoadMemory(u8),
-
-    /// Instruction type for not implemented
-    NotImplemented,
 }
 
 #[cfg(test)]
@@ -807,7 +868,7 @@ mod tests {
         struct TestCase<'a> {
             name: &'a str,
             bytes: (u8, u8),
-            expected: Instruction,
+            expected: Result<Instruction, InstructionError>,
         }
         // NOTE: Downside of table testing this way is that all tests are treated as one and if one
         // fails it does not test the remaining cases
@@ -815,194 +876,200 @@ mod tests {
             TestCase {
                 name: "00E0 - ClearScreen",
                 bytes: (0x00, 0xE0),
-                expected: Instruction::ClearScreen,
+                expected: Ok(Instruction::ClearScreen),
             },
             TestCase {
                 name: "00EE - ReturnSubroutine",
                 bytes: (0x00, 0xEE),
-                expected: Instruction::ReturnSubroutine,
+                expected: Ok(Instruction::ReturnSubroutine),
             },
             TestCase {
                 name: "1--- - Jump 2 nibbles",
                 bytes: (0x10, 123),
-                expected: Instruction::Jump(123),
+                expected: Ok(Instruction::Jump(123)),
             },
             TestCase {
                 // Jump takes 3 hex values, so the the leftover 1 from first byte adds to value
                 name: "1--- - Jump 3 nibbles",
                 bytes: (0x11, 123),
-                expected: Instruction::Jump(379),
+                expected: Ok(Instruction::Jump(379)),
             },
             TestCase {
                 name: "2--- - CallSubroutine 2 nibbles",
                 bytes: (0x20, 123),
-                expected: Instruction::CallSubroutine(123),
+                expected: Ok(Instruction::CallSubroutine(123)),
             },
             TestCase {
                 name: "2--- - CallSubroutine 3 nibbles",
                 bytes: (0x21, 123),
-                expected: Instruction::CallSubroutine(379),
+                expected: Ok(Instruction::CallSubroutine(379)),
             },
             TestCase {
                 name: "3--- - ValueEqualitySkip - 5",
                 bytes: (0x3F, 0x05),
-                expected: Instruction::ValueEqualitySkip(15, 5),
+                expected: Ok(Instruction::ValueEqualitySkip(15, 5)),
             },
             TestCase {
                 name: "3--- - ValueEqualitySkip - 21",
                 bytes: (0x31, 0x15),
-                expected: Instruction::ValueEqualitySkip(1, 21),
+                expected: Ok(Instruction::ValueEqualitySkip(1, 21)),
             },
             TestCase {
                 name: "3--- - ValueEqualitySkip - 80",
                 bytes: (0x31, 0x50),
-                expected: Instruction::ValueEqualitySkip(1, 80),
+                expected: Ok(Instruction::ValueEqualitySkip(1, 80)),
             },
             TestCase {
                 name: "3--- - ValueEqualitySkip - 255",
                 bytes: (0x31, 0xFF),
-                expected: Instruction::ValueEqualitySkip(1, 255),
+                expected: Ok(Instruction::ValueEqualitySkip(1, 255)),
             },
             TestCase {
                 name: "4--- - ValueInequalitySkip",
                 bytes: (0x41, 0xFF),
-                expected: Instruction::ValueInequalitySkip(1, 255),
+                expected: Ok(Instruction::ValueInequalitySkip(1, 255)),
             },
             TestCase {
                 name: "5--0 - RegisterEqualitySkip",
                 bytes: (0x51, 0xF0),
-                expected: Instruction::RegisterEqualitySkip(1, 15),
+                expected: Ok(Instruction::RegisterEqualitySkip(1, 15)),
             },
             TestCase {
                 name: "5--0 - RegisterEqualitySkip",
                 bytes: (0x5A, 0xC0),
-                expected: Instruction::RegisterEqualitySkip(10, 12),
+                expected: Ok(Instruction::RegisterEqualitySkip(10, 12)),
             },
             TestCase {
                 name: "7--- - AddRegisterNoFlag - 1 123",
                 bytes: (0x71, 123),
-                expected: Instruction::AddToRegisterNoFlag(1, 123),
+                expected: Ok(Instruction::AddToRegisterNoFlag(1, 123)),
             },
             TestCase {
                 name: "7--- - AddRegisterNoFlag - 11 222",
                 bytes: (0x7B, 222),
-                expected: Instruction::AddToRegisterNoFlag(11, 222),
+                expected: Ok(Instruction::AddToRegisterNoFlag(11, 222)),
             },
             TestCase {
                 name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x91, 0xF0),
-                expected: Instruction::RegisterInequalitySkip(1, 15),
+                expected: Ok(Instruction::RegisterInequalitySkip(1, 15)),
             },
             TestCase {
                 name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x9A, 0xC0),
-                expected: Instruction::RegisterInequalitySkip(10, 12),
+                expected: Ok(Instruction::RegisterInequalitySkip(10, 12)),
             },
             TestCase {
                 name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x91, 0xF0),
-                expected: Instruction::RegisterInequalitySkip(1, 15),
+                expected: Ok(Instruction::RegisterInequalitySkip(1, 15)),
             },
             TestCase {
                 name: "9--0 - RegisterInequalitySkip",
                 bytes: (0x9A, 0xC0),
-                expected: Instruction::RegisterInequalitySkip(10, 12),
+                expected: Ok(Instruction::RegisterInequalitySkip(10, 12)),
             },
             TestCase {
                 name: "A--- - SetIndex 2 nibbles",
                 bytes: (0xA0, 123),
-                expected: Instruction::SetIndex(123),
+                expected: Ok(Instruction::SetIndex(123)),
             },
             TestCase {
                 name: "A--- - SetIndex 3 nibbles",
                 bytes: (0xA1, 123),
-                expected: Instruction::SetIndex(379),
+                expected: Ok(Instruction::SetIndex(379)),
             },
             TestCase {
                 name: "B--- - JumpWithRegisterOffset - 1 123",
                 bytes: (0xB1, 123),
-                expected: Instruction::JumpWithRegisterOffset(1, 379),
+                expected: Ok(Instruction::JumpWithRegisterOffset(1, 379)),
             },
             TestCase {
                 name: "C--- - Random - 1 123",
                 bytes: (0xC1, 123),
-                expected: Instruction::Random(1, 123),
+                expected: Ok(Instruction::Random(1, 123)),
             },
             TestCase {
                 name: "D--- - Draw - 1 12 42",
                 bytes: (0xD1, 0xCF),
-                expected: Instruction::Draw(1, 12, 15),
+                expected: Ok(Instruction::Draw(1, 12, 15)),
             },
             TestCase {
                 name: "E-9E - SkipIfPressed - 12",
                 bytes: (0xEC, 0x9E),
-                expected: Instruction::SkipIfPressed(12),
+                expected: Ok(Instruction::SkipIfPressed(12)),
             },
             TestCase {
                 name: "E-A1 - SkipIfNotPressed - 15",
                 bytes: (0xEF, 0xA1),
-                expected: Instruction::SkipIfNotPressed(15),
+                expected: Ok(Instruction::SkipIfNotPressed(15)),
             },
             TestCase {
                 name: "E-XX - NotImplemented",
                 bytes: (0xEF, 0xF1),
-                expected: Instruction::NotImplemented,
+                expected: Err(InstructionError::NotImplemented),
             },
             TestCase {
                 name: "F-07 - GetDelayTimer - 10",
                 bytes: (0xFA, 0x07),
-                expected: Instruction::GetDelayTimer(10),
+                expected: Ok(Instruction::GetDelayTimer(10)),
             },
             TestCase {
                 name: "F-15 - SetDelayTimer - 10",
                 bytes: (0xFA, 0x15),
-                expected: Instruction::SetDelayTimer(10),
+                expected: Ok(Instruction::SetDelayTimer(10)),
             },
             TestCase {
                 name: "F-18 - SetSoundTimer - 11",
                 bytes: (0xFB, 0x18),
-                expected: Instruction::SetSoundTimer(11),
+                expected: Ok(Instruction::SetSoundTimer(11)),
             },
             TestCase {
                 name: "F-1E - AddToIndex - 7",
                 bytes: (0xF7, 0x1E),
-                expected: Instruction::AddToIndex(7),
+                expected: Ok(Instruction::AddToIndex(7)),
             },
             TestCase {
                 name: "F-0A - GetKey - 9",
                 bytes: (0xF9, 0x0A),
-                expected: Instruction::GetKey(9),
+                expected: Ok(Instruction::GetKey(9)),
             },
             TestCase {
                 name: "F-29 - FontCharacter - 9",
                 bytes: (0xF9, 0x29),
-                expected: Instruction::FontCharacter(9),
+                expected: Ok(Instruction::FontCharacter(9)),
             },
             TestCase {
                 name: "F-33 - DecimalConversion - 9",
                 bytes: (0xF9, 0x33),
-                expected: Instruction::DecimalConversion(9),
+                expected: Ok(Instruction::DecimalConversion(9)),
             },
             TestCase {
                 name: "F-55 - StoreMemory - 9",
                 bytes: (0xF9, 0x55),
-                expected: Instruction::StoreMemory(9),
+                expected: Ok(Instruction::StoreMemory(9)),
             },
             TestCase {
                 name: "F-65 - LoadMemory - 9",
                 bytes: (0xF9, 0x65),
-                expected: Instruction::LoadMemory(9),
+                expected: Ok(Instruction::LoadMemory(9)),
             },
             TestCase {
                 name: "NotImplemented",
                 bytes: (0xFF, 0),
-                expected: Instruction::NotImplemented,
+                expected: Err(InstructionError::NotImplemented),
             },
         ];
 
         for tc in test_cases {
+            let parsed = parse_instruction(tc.bytes);
+            let equal = match &tc.expected {
+                Ok(val) => val == &parsed.unwrap(),
+                Err(_) => parsed.is_err(),
+            };
+
             assert!(
-                tc.expected == parse_instruction(tc.bytes),
+                equal,
                 "Testing {} with {:?} -- expected {:?}, got {:?}",
                 tc.name,
                 tc.bytes,
