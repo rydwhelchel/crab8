@@ -574,7 +574,6 @@ enum InstructionError {
 fn parse_instruction(bytes: (u8, u8)) -> Result<Instruction, InstructionError> {
     let instruction: String = format!("{:04x}", combine_bytes(bytes));
 
-    println!("Parsing instruction {:?}", instruction);
     // Unwrapping directly because above format string should always have 4 characters
     match instruction.chars().nth(0).unwrap() {
         '0' => {
